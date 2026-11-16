@@ -1,10 +1,7 @@
-import { LayerError } from '@mcp-layer/error';
+import { CosplayError } from 'cosplaying/errors';
 import { readFileSync, realpathSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { quoteShell } from 'cosplaying/hooks';
-
-const errorScope = 'cosplaying';
-const errorDocs = 'github.com/3rd-Eden/cosplay/tree/main/packages';
 
 /** @type {string} */
 export const mainPath = fileURLToPath(new URL('./main.js', import.meta.url));
@@ -18,10 +15,8 @@ export function packageVersion() {
     return JSON.parse(readFileSync(file, 'utf8')).version;
   } catch (error) {
     const message = error.message;
-    throw new LayerError({
+    throw new CosplayError({
       name: 'cli',
-      scope: errorScope,
-      docs: errorDocs,
       method: 'packageVersion',
       message: 'could not read the package version from %s: %s. Reinstall cosplaying. The package.json for this install is missing or unreadable.',
       args: [file, message],

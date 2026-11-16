@@ -15,12 +15,9 @@ import {
 import { homedir, tmpdir } from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { LayerError } from '@mcp-layer/error';
+import { CosplayError } from 'cosplaying/errors';
 import { PluginManager } from 'live-plugin-manager';
 import { quoteShell } from 'cosplaying/hooks';
-
-const errorScope = 'cosplaying';
-const errorDocs = 'github.com/3rd-Eden/cosplay/tree/main/packages';
 
 /** @type {Set<string>} */
 export const RESERVED_COMMANDS = new Set([
@@ -45,10 +42,8 @@ export async function withAttributedCopy(sourcePath, render, work) {
   try {
     bytes = readFileSync(sourcePath);
   } catch (error) {
-    throw new LayerError({
+    throw new CosplayError({
       name: 'plugin',
-      scope: errorScope,
-      docs: errorDocs,
       method: 'withAttributedCopy',
       message: 'could not read %s: %s. Check that the source file exists and is readable, then retry the command.',
       args: [sourcePath, error.message],
@@ -57,10 +52,8 @@ export async function withAttributedCopy(sourcePath, render, work) {
   }
   const text = bytes.toString('utf8');
   if (!Buffer.from(text, 'utf8').equals(bytes)) {
-    throw new LayerError({
+    throw new CosplayError({
       name: 'plugin',
-      scope: errorScope,
-      docs: errorDocs,
       method: 'withAttributedCopy',
       message: 'could not read %s: %s. Check that the source file exists and is readable, then retry the command.',
       args: [sourcePath, 'file is not valid UTF-8'],
@@ -74,10 +67,8 @@ export async function withAttributedCopy(sourcePath, render, work) {
   try {
     writeFileSync(copyPath, rendered, { encoding: 'utf8', mode: 0o600 });
   } catch (error) {
-    throw new LayerError({
+    throw new CosplayError({
       name: 'plugin',
-      scope: errorScope,
-      docs: errorDocs,
       method: 'withAttributedCopy',
       message: 'could not write the attributed copy %s: %s. Free space in the temporary directory and retry the command. The original file was not changed.',
       args: [copyPath, error.message],
@@ -226,10 +217,8 @@ function installProductionDependencies(directory, sourceDirectory) {
   });
   if (result.error || result.status !== 0) {
     const detail = `${result.stderr || ''}${result.stdout || ''}`.trim() || result.error?.message || 'npm install failed';
-    throw new LayerError({
+    throw new CosplayError({
       name: 'plugin',
-      scope: errorScope,
-      docs: errorDocs,
       method: 'installPlugin',
       message: 'could not install dependencies for %s: %s. Fix the dependency, then run cosplaying plugin install again.',
       args: [directory, detail],
@@ -263,13 +252,11 @@ const COMMAND_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]*$/;
 
 /**
  * @param {string} name
- * @returns {LayerError}
+ * @returns {CosplayError}
  */
 function commandNameError(name) {
-  return new LayerError({
+  return new CosplayError({
     name: 'plugin',
-    scope: errorScope,
-    docs: errorDocs,
     method: 'loadModule',
     message: 'plugin command %s must be a single token of letters, digits, underscores, and hyphens. Rename the package so the command matches that token.',
     args: [name],
@@ -287,10 +274,8 @@ function resolvePluginEntry(directory, manifest) {
   const mainField = manifest.main || 'index.js';
   const mainFile = path.resolve(directory, mainField);
   if (/\.(?:[cm]?ts|tsx)$/.test(mainFile)) {
-    throw new LayerError({
+    throw new CosplayError({
       name: 'plugin',
-      scope: errorScope,
-      docs: errorDocs,
       method: 'loadModule',
       message: 'plugin entry %s is TypeScript. Write the plugin in JavaScript. Node will not run TypeScript once that file is under node_modules.',
       args: [mainFile],
@@ -310,10 +295,8 @@ function resolvePluginEntry(directory, manifest) {
   }
   const relative = path.relative(root, real);
   if (relative.startsWith('..') || path.isAbsolute(relative)) {
-    throw new LayerError({
+    throw new CosplayError({
       name: 'plugin',
-      scope: errorScope,
-      docs: errorDocs,
       method: 'loadModule',
       message: 'plugin entry %s is outside %s. Set package.json main to a JavaScript file inside the plugin directory.',
       args: [real, root],
@@ -339,10 +322,8 @@ function githubRepo(source) {
  */
 async function loadModule(mainFile, name) {
   if (RESERVED_COMMANDS.has(name)) {
-    throw new LayerError({
+    throw new CosplayError({
       name: 'plugin',
-      scope: errorScope,
-      docs: errorDocs,
       method: 'loadModule',
       message: 'plugin command is reserved: %s. Rename the package. Reserved names are hook, agent-hook, rewrite, install, uninstall, doctor, and plugin.',
       args: [name],
@@ -352,10 +333,8 @@ async function loadModule(mainFile, name) {
   try {
     imported = await import(pathToFileURL(mainFile).href);
   } catch (error) {
-    throw new LayerError({
+    throw new CosplayError({
       name: 'plugin',
-      scope: errorScope,
-      docs: errorDocs,
       method: 'loadModule',
       message: 'could not import plugin %s: %s. Fix the plugin entry so Node can import it, then run the command again. The underlying CLI was not run.',
       args: [mainFile, error.message],
@@ -436,10 +415,8 @@ function matchingPlugins(root, name) {
  * @returns {string}
  */
 function alreadyInstalledMessage(name, directory) {
-  return new LayerError({
+  return new CosplayError({
     name: 'plugin',
-    scope: errorScope,
-    docs: errorDocs,
     method: 'installPlugin',
     message: 'plugin %s is already installed at %s. Run cosplaying plugin uninstall %s first. Uninstall it, then install the plugin again.',
     args: [name, directory, name],
@@ -470,8 +447,37 @@ export async function loadInstalledPlugins(options = {}) {
 }
 
 /**
+ * @param {string} directory
+ * @param {string} kind
+ */
+async function loadPluginDirectory(directory, kind) {
+  const manifest = JSON.parse(readFileSync(path.join(directory, 'package.json'), 'utf8'));
+  const { name, mainFile } = resolvePluginEntry(directory, manifest);
+  const descriptor = await loadModule(mainFile, name);
+  return {
+    name,
+    command: name,
+    kind,
+    directory,
+    entry: mainFile,
+    descriptor,
+  };
+}
+
+/**
+ * @param {Record<string, string> | undefined} bundled
+ * @param {string} name
+ * @returns {string}
+ */
+function bundledDirectory(bundled, name) {
+  if (!bundled || typeof bundled !== 'object') return '';
+  const directory = bundled[name];
+  return typeof directory === 'string' ? directory : '';
+}
+
+/**
  * @param {string[]} entries
- * @param {{cwd?: string, env?: NodeJS.ProcessEnv, home?: string, platform?: NodeJS.Platform}} options
+ * @param {{cwd?: string, env?: NodeJS.ProcessEnv, home?: string, platform?: NodeJS.Platform, bundled?: Record<string, string>}} options
  */
 export async function loadConfiguredPlugins(entries, options) {
   const installed = await loadInstalledPlugins(options);
@@ -481,10 +487,8 @@ export async function loadConfiguredPlugins(entries, options) {
   const selected = [];
   for (const plugin of installed) {
     if (byCommand.has(plugin.command)) {
-      throw new LayerError({
+      throw new CosplayError({
         name: 'plugin',
-        scope: errorScope,
-        docs: errorDocs,
         method: 'loadInstalledPlugins',
         message: 'plugin command %s is declared by more than one plugin. Uninstall one plugin with cosplaying plugin uninstall <name>, or remove the duplicate from the plugins list.',
         args: [plugin.command],
@@ -498,25 +502,14 @@ export async function loadConfiguredPlugins(entries, options) {
     let plugin;
     if (isPath) {
       const directory = path.resolve(options.cwd || process.cwd(), entry);
-      const file = path.join(directory, 'package.json');
-      const manifest = JSON.parse(readFileSync(file, 'utf8'));
-      const { name, mainFile } = resolvePluginEntry(directory, manifest);
-      const descriptor = await loadModule(mainFile, name);
-      plugin = {
-        name,
-        command: name,
-        kind: 'path',
-        directory,
-        entry: mainFile,
-        descriptor,
-      };
+      plugin = await loadPluginDirectory(directory, 'path');
     } else {
       plugin = byName.get(entry);
+      const shipped = bundledDirectory(options.bundled, entry);
+      if (!plugin && shipped) plugin = await loadPluginDirectory(shipped, 'bundled');
       if (!plugin) {
-        throw new LayerError({
+        throw new CosplayError({
           name: 'plugin',
-          scope: errorScope,
-          docs: errorDocs,
           method: 'loadConfiguredPlugins',
           message: 'configured plugin %s is not installed. Run cosplaying plugin install <git-url-or-path> or change the plugins entry to an existing path.',
           args: [entry],
@@ -524,10 +517,8 @@ export async function loadConfiguredPlugins(entries, options) {
       }
     }
     if (byCommand.has(plugin.command) && !selected.includes(plugin)) {
-      throw new LayerError({
+      throw new CosplayError({
         name: 'plugin',
-        scope: errorScope,
-        docs: errorDocs,
         method: 'loadConfiguredPlugins',
         message: 'plugin command %s is declared by more than one plugin. Uninstall one plugin with cosplaying plugin uninstall <name>, or remove the duplicate from the plugins list.',
         args: [plugin.command],
@@ -552,10 +543,8 @@ export function resolveRealBin(command, { env = process.env, cliPaths = [] } = {
   if (override) {
     if (!path.isAbsolute(override)) {
       return {
-        error: new LayerError({
+        error: new CosplayError({
           name: 'plugin',
-          scope: errorScope,
-          docs: errorDocs,
           method: 'resolveRealBin',
           message: '%s must be an absolute path to the real %s executable. Set the override to an absolute path of a regular file, not a directory or a relative path.',
           args: [overrideName, command],
@@ -565,10 +554,8 @@ export function resolveRealBin(command, { env = process.env, cliPaths = [] } = {
     try {
       if (!statSync(override).isFile()) {
         return {
-          error: new LayerError({
+          error: new CosplayError({
             name: 'plugin',
-            scope: errorScope,
-            docs: errorDocs,
             method: 'resolveRealBin',
             message: '%s must be an absolute path to the real %s executable. Set the override to an absolute path of a regular file, not a directory or a relative path.',
             args: [overrideName, command],
@@ -577,10 +564,8 @@ export function resolveRealBin(command, { env = process.env, cliPaths = [] } = {
       }
     } catch {
       return {
-        error: new LayerError({
+        error: new CosplayError({
           name: 'plugin',
-          scope: errorScope,
-          docs: errorDocs,
           method: 'resolveRealBin',
           message: '%s must be an absolute path to the real %s executable. Set the override to an absolute path of a regular file, not a directory or a relative path.',
           args: [overrideName, command],
@@ -596,10 +581,8 @@ export function resolveRealBin(command, { env = process.env, cliPaths = [] } = {
     if (cliPaths.some((own) => own && (real === own || override === own))) {
       const token = command.toUpperCase().replace(/[^A-Za-z0-9]/g, '_');
       return {
-        error: new LayerError({
+        error: new CosplayError({
           name: 'plugin',
-          scope: errorScope,
-          docs: errorDocs,
           method: 'resolveRealBin',
           message: 'cosplaying found only its own executable for %s. Refusing to call it again. Install the real binary, or set COSPLAYING_%s_BIN to its absolute path.',
           args: [command, token],
@@ -631,10 +614,8 @@ export function resolveRealBin(command, { env = process.env, cliPaths = [] } = {
   }
   if (skipped.length > 0) {
     return {
-      error: new LayerError({
+      error: new CosplayError({
         name: 'plugin',
-        scope: errorScope,
-        docs: errorDocs,
         method: 'resolveRealBin',
         message: 'cosplaying found only its own executable for %s. Refusing to call it again. Install the real binary, or set COSPLAYING_%s_BIN to its absolute path.',
         args: [command, command.toUpperCase().replace(/[^A-Za-z0-9]/g, '_')],
@@ -642,10 +623,8 @@ export function resolveRealBin(command, { env = process.env, cliPaths = [] } = {
     };
   }
   return {
-    error: new LayerError({
+    error: new CosplayError({
       name: 'plugin',
-      scope: errorScope,
-      docs: errorDocs,
       method: 'resolveRealBin',
       message: 'cosplaying could not find the real %s executable on PATH. Install it so it is on PATH, or set COSPLAYING_%s_BIN to its absolute path.',
       args: [command, command.toUpperCase().replace(/[^A-Za-z0-9]/g, '_')],
@@ -667,10 +646,8 @@ export async function installPlugin(source, options) {
       if (RESERVED_COMMANDS.has(name)) {
         return {
           ok: false,
-          error: new LayerError({
+          error: new CosplayError({
             name: 'plugin',
-            scope: errorScope,
-            docs: errorDocs,
             method: 'installPlugin',
             message: 'plugin command is reserved: %s. Rename the package. Reserved names are hook, agent-hook, rewrite, install, uninstall, doctor, and plugin.',
             args: [name],
@@ -713,10 +690,8 @@ export async function installPlugin(source, options) {
     if (!exists(directory) || !statSync(directory).isDirectory()) {
       return {
         ok: false,
-        error: new LayerError({
+        error: new CosplayError({
           name: 'plugin',
-          scope: errorScope,
-          docs: errorDocs,
           method: 'installPlugin',
           message: '%s is not a plugin directory. Pass a directory that contains package.json, or a GitHub repository.',
           args: [source],
@@ -728,16 +703,14 @@ export async function installPlugin(source, options) {
     try {
       resolved = resolvePluginEntry(directory, manifest);
     } catch (error) {
-      return { ok: false, error: error instanceof LayerError ? error.message : caughtInstallError(source, error) };
+      return { ok: false, error: error instanceof CosplayError ? error.message : caughtInstallError(source, error) };
     }
     const name = resolved.name;
     if (!name) {
       return {
         ok: false,
-        error: new LayerError({
+        error: new CosplayError({
           name: 'plugin',
-          scope: errorScope,
-          docs: errorDocs,
           method: 'installPlugin',
           message: 'plugin package.json at %s could not be read: %s. Add a package.json with name, version, and main.',
           args: [path.join(directory, 'package.json'), 'missing name'],
@@ -747,10 +720,8 @@ export async function installPlugin(source, options) {
     if (RESERVED_COMMANDS.has(name)) {
       return {
         ok: false,
-        error: new LayerError({
+        error: new CosplayError({
           name: 'plugin',
-          scope: errorScope,
-          docs: errorDocs,
           method: 'installPlugin',
           message: 'plugin command is reserved: %s. Rename the package. Reserved names are hook, agent-hook, rewrite, install, uninstall, doctor, and plugin.',
           args: [name],
@@ -789,10 +760,8 @@ export async function uninstallPlugin(name, options) {
   if (typeof name !== 'string' || name === '' || path.isAbsolute(name) || name.split(/[\\/]/).includes('..')) {
     return {
       ok: false,
-      error: new LayerError({
+      error: new CosplayError({
         name: 'plugin',
-        scope: errorScope,
-        docs: errorDocs,
         method: 'uninstallPlugin',
         message: 'plugin name %s is outside the data directory %s. Run cosplaying plugin list and pass one of those names.',
         args: [name, root],
@@ -803,10 +772,8 @@ export async function uninstallPlugin(name, options) {
   if (matches.length === 0) {
     return {
       ok: false,
-      error: new LayerError({
+      error: new CosplayError({
         name: 'plugin',
-        scope: errorScope,
-        docs: errorDocs,
         method: 'uninstallPlugin',
         message: 'plugin %s is not installed. Run cosplaying plugin list and pass one of those names.',
         args: [name],
@@ -816,10 +783,8 @@ export async function uninstallPlugin(name, options) {
   if (matches.length > 1) {
     return {
       ok: false,
-      error: new LayerError({
+      error: new CosplayError({
         name: 'plugin',
-        scope: errorScope,
-        docs: errorDocs,
         method: 'uninstallPlugin',
         message: 'plugin command %s is declared by more than one installed plugin. Run cosplaying plugin list, then cosplaying plugin uninstall with one scoped package name.',
         args: [name],
@@ -835,10 +800,8 @@ export async function uninstallPlugin(name, options) {
   } catch (error) {
     return {
       ok: false,
-      error: new LayerError({
+      error: new CosplayError({
         name: 'plugin',
-        scope: errorScope,
-        docs: errorDocs,
         method: 'uninstallPlugin',
         message: 'could not remove plugin %s: %s. Check permissions under the cosplaying data directory and run cosplaying plugin uninstall again.',
         args: [name, error.message],
@@ -987,11 +950,9 @@ export function defaultSpawn(command, args, options = {}) {
  * @returns {string}
  */
 function caughtInstallError(source, error) {
-  if (error instanceof LayerError) return error.message;
-  return new LayerError({
+  if (error instanceof CosplayError) return error.message;
+  return new CosplayError({
     name: 'plugin',
-    scope: errorScope,
-    docs: errorDocs,
     method: 'installPlugin',
     message: 'could not install plugin files for %s: %s. Check that the cosplaying data directory is writable, then run cosplaying plugin install again.',
     args: [source, error.message],

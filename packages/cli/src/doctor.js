@@ -1,17 +1,14 @@
 import { spawnSync } from 'node:child_process';
 import { existsSync, readFileSync, realpathSync } from 'node:fs';
 import path from 'node:path';
-import { LayerError } from '@mcp-layer/error';
+import { CosplayError } from 'cosplaying/errors';
 import { parse } from 'unbash';
-import { loadConfig } from './config.js';
 import { readUtf8File } from 'cosplaying/hooks';
-import { loadConfiguredPlugins, resolveRealBin } from 'cosplaying/plugin';
+import { resolveRealBin } from 'cosplaying/plugin';
+import { loadPlugins } from './plugins.js';
 import { adapters, getAdapter } from 'cosplaying/adapters';
 import { gitRoot, installHarness, repairHookOrder } from './harness.js';
 import { cosplayingBinPath, packageVersion, realMainPath } from './paths.js';
-
-const errorScope = 'cosplaying';
-const errorDocs = 'github.com/3rd-Eden/cosplay/tree/main/packages';
 
 /**
  * @param {object} options
@@ -31,8 +28,7 @@ export async function runDoctor(options) {
 
   let plugins = [];
   try {
-    const config = loadConfig(options);
-    plugins = await loadConfiguredPlugins(config.plugins, options);
+    plugins = (await loadPlugins(options)).plugins;
     for (const plugin of plugins) {
       if (plugin.descriptor.intercept === false) continue;
       const resolved = resolveRealBin(plugin.command, { env: options.env, platform: options.platform, cliPaths: [realMainPath()] });
@@ -104,10 +100,8 @@ function inspectExtension(file, harness, commands, required, options, findings, 
     const code = error.code;
     if (code === 'ENOENT') {
       if (required) {
-        findings.push(new LayerError({
+        findings.push(new CosplayError({
           name: 'doctor',
-          scope: errorScope,
-          docs: errorDocs,
           method: 'inspectExtension',
           message: 'missing owned hook in %s. Run cosplaying install for the user scope, or cosplaying install --project-dir <dir> for a project.',
           args: [file],
@@ -115,15 +109,13 @@ function inspectExtension(file, harness, commands, required, options, findings, 
       }
       return;
     }
-    if (error instanceof LayerError) {
+    if (error instanceof CosplayError) {
       findings.push(error.message);
       return;
     }
     const message = error.message;
-    findings.push(new LayerError({
+    findings.push(new CosplayError({
       name: 'hooks',
-      scope: errorScope,
-      docs: errorDocs,
       method: 'inspectExtension',
       message: 'could not read %s: %s. Fix the permissions on that file, or move it aside and run cosplaying install again.',
       args: [file, message],
@@ -131,10 +123,8 @@ function inspectExtension(file, harness, commands, required, options, findings, 
     return;
   }
   if (!current.includes(harness.marker())) {
-    findings.push(new LayerError({
+    findings.push(new CosplayError({
       name: 'hooks',
-      scope: errorScope,
-      docs: errorDocs,
       method: 'inspectExtension',
       message: 'refusing to replace unmanaged hook file %s. Move the file aside or add the cosplaying marker comment, then run cosplaying install again.',
       args: [file],
@@ -153,10 +143,8 @@ function inspectExtension(file, harness, commands, required, options, findings, 
         return;
       }
     }
-    findings.push(new LayerError({
+    findings.push(new CosplayError({
       name: 'doctor',
-      scope: errorScope,
-      docs: errorDocs,
       method: 'inspectExtension',
       message: 'hook file %s does not match the current Node path or plugin commands. Run cosplaying doctor --repair to regenerate that Pi or OpenCode extension.',
       args: [file],
@@ -185,10 +173,8 @@ function inspectJsonHooks(file, harness, required, options, findings, probeCache
     const code = error.code;
     if (code === 'ENOENT') {
       if (required) {
-        findings.push(new LayerError({
+        findings.push(new CosplayError({
           name: 'doctor',
-          scope: errorScope,
-          docs: errorDocs,
           method: 'inspectJsonHooks',
           message: 'missing owned hook in %s. Run cosplaying install for the user scope, or cosplaying install --project-dir <dir> for a project.',
           args: [file],
@@ -197,10 +183,8 @@ function inspectJsonHooks(file, harness, required, options, findings, probeCache
       return;
     }
     const message = error.message;
-    findings.push(new LayerError({
+    findings.push(new CosplayError({
       name: 'hooks',
-      scope: errorScope,
-      docs: errorDocs,
       method: 'inspectJsonHooks',
       message: 'could not read %s: %s. Fix the permissions on that file, or move it aside and run cosplaying install again.',
       args: [file, message],
@@ -211,10 +195,8 @@ function inspectJsonHooks(file, harness, required, options, findings, probeCache
   try {
     decoded = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
   } catch {
-    findings.push(new LayerError({
+    findings.push(new CosplayError({
       name: 'hooks',
-      scope: errorScope,
-      docs: errorDocs,
       method: 'inspectJsonHooks',
       message: 'invalid config %s: file is not valid UTF-8. Replace the file with UTF-8 JSON, or move it aside and run cosplaying install again.',
       args: [file],
@@ -226,10 +208,8 @@ function inspectJsonHooks(file, harness, required, options, findings, probeCache
     parsed = JSON.parse(decoded);
   } catch (error) {
     const message = error.message;
-    findings.push(new LayerError({
+    findings.push(new CosplayError({
       name: 'doctor',
-      scope: errorScope,
-      docs: errorDocs,
       method: 'inspectJsonHooks',
       message: 'invalid config %s: %s. Fix the JSON, or move the file aside and run cosplaying install again.',
       args: [file, message],
@@ -237,10 +217,8 @@ function inspectJsonHooks(file, harness, required, options, findings, probeCache
     return;
   }
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-    findings.push(new LayerError({
+    findings.push(new CosplayError({
       name: 'hooks',
-      scope: errorScope,
-      docs: errorDocs,
       method: 'inspectJsonHooks',
       message: 'invalid config %s: config must contain a top-level object. Replace the file with a JSON object, or move it aside and run cosplaying install again.',
       args: [file],
@@ -252,10 +230,8 @@ function inspectJsonHooks(file, harness, required, options, findings, probeCache
   collectOwned(parsed, owner, listed);
   if (listed.length === 0) {
     if (required || existsSync(file)) {
-      findings.push(new LayerError({
+      findings.push(new CosplayError({
         name: 'doctor',
-        scope: errorScope,
-        docs: errorDocs,
         method: 'inspectJsonHooks',
         message: 'missing owned hook in %s. Run cosplaying install for the user scope, or cosplaying install --project-dir <dir> for a project.',
         args: [file],
@@ -267,10 +243,8 @@ function inspectJsonHooks(file, harness, required, options, findings, probeCache
   const present = ownedEvents(parsed, owner);
   for (const event of harness.events()) {
     if (!present.has(event)) {
-      findings.push(new LayerError({
+      findings.push(new CosplayError({
         name: 'doctor',
-        scope: errorScope,
-        docs: errorDocs,
         method: 'inspectJsonHooks',
         message: 'missing managed %s hook in %s. Run cosplaying install for that harness so the missing event is written.',
         args: [event, file],
@@ -370,10 +344,8 @@ function inspectCommand(command, harness, file, options, findings, probeCache, p
   try {
     tree = parse(command);
   } catch (error) {
-    findings.push(new LayerError({
+    findings.push(new CosplayError({
       name: 'doctor',
-      scope: errorScope,
-      docs: errorDocs,
       method: 'inspectCommand',
       message: '%s: could not parse hook command: %s. Run cosplaying install to rewrite the owned hook. Do not hand-edit the command string.',
       args: [file, error.message],
@@ -383,10 +355,8 @@ function inspectCommand(command, harness, file, options, findings, probeCache, p
   const statement = tree.commands?.length === 1 ? tree.commands[0] : null;
   const node = statement?.type === 'Statement' ? statement.command : null;
   if (!node || node.type !== 'Command' || statement.redirects?.length || node.redirects?.length) {
-    findings.push(new LayerError({
+    findings.push(new CosplayError({
       name: 'doctor',
-      scope: errorScope,
-      docs: errorDocs,
       method: 'inspectCommand',
       message: '%s: hook command must be a direct invocation. Run cosplaying install so the owned hook is one command with no pipes, lists, or redirects.',
       args: [file],
@@ -394,10 +364,8 @@ function inspectCommand(command, harness, file, options, findings, probeCache, p
     return;
   }
   if (node.prefix.length > 0) {
-    findings.push(new LayerError({
+    findings.push(new CosplayError({
       name: 'doctor',
-      scope: errorScope,
-      docs: errorDocs,
       method: 'inspectCommand',
       message: '%s: hook command must be a direct invocation. Run cosplaying install so the owned hook is one command with no pipes, lists, or redirects.',
       args: [file],
@@ -407,10 +375,8 @@ function inspectCommand(command, harness, file, options, findings, probeCache, p
   const words = [node.name, ...node.suffix].filter((word) => word).map((word) => word.value ?? word.text ?? '');
   const agent = words.indexOf('agent-hook');
   if (agent < 1 || words[agent + 1] !== harness || !words[agent + 2]) {
-    findings.push(new LayerError({
+    findings.push(new CosplayError({
       name: 'doctor',
-      scope: errorScope,
-      docs: errorDocs,
       method: 'inspectCommand',
       message: '%s: hook command must invoke agent-hook %s <event>. Run cosplaying install to rewrite the hook as node, the main script, agent-hook, the harness id, and the event.',
       args: [file, harness],
@@ -418,10 +384,8 @@ function inspectCommand(command, harness, file, options, findings, probeCache, p
     return;
   }
   if (words.length !== agent + 3) {
-    findings.push(new LayerError({
+    findings.push(new CosplayError({
       name: 'doctor',
-      scope: errorScope,
-      docs: errorDocs,
       method: 'inspectCommand',
       message: '%s: hook command has unexpected arguments. Run cosplaying install to drop the extra arguments from the owned hook.',
       args: [file],
@@ -431,10 +395,8 @@ function inspectCommand(command, harness, file, options, findings, probeCache, p
   const executable = words[0];
   const script = agent === 2 ? words[1] : undefined;
   if (agent === 2 && executableBase(executable) !== 'node') {
-    findings.push(new LayerError({
+    findings.push(new CosplayError({
       name: 'doctor',
-      scope: errorScope,
-      docs: errorDocs,
       method: 'inspectCommand',
       message: '%s: unexpected executable %s. Run cosplaying install so the hook starts with node and this package\'s main.js, or with the cosplaying executable.',
       args: [file, executable],
@@ -454,10 +416,8 @@ function inspectCommand(command, harness, file, options, findings, probeCache, p
       }
       return;
     }
-    findings.push(new LayerError({
+    findings.push(new CosplayError({
       name: 'doctor',
-      scope: errorScope,
-      docs: errorDocs,
       method: 'inspectCommand',
       message: '%s: hook executable does not exist: %s. Run cosplaying doctor --repair to reinstall the hook with the current Node executable.',
       args: [file, executable],
@@ -466,10 +426,8 @@ function inspectCommand(command, harness, file, options, findings, probeCache, p
   }
   if (script) {
     if (path.isAbsolute(script) && !existsSync(script)) {
-      findings.push(new LayerError({
+      findings.push(new CosplayError({
         name: 'doctor',
-        scope: errorScope,
-        docs: errorDocs,
         method: 'inspectCommand',
         message: '%s: hook script does not exist: %s. Run cosplaying install so the hook points at this package\'s main.js.',
         args: [file, script],
@@ -477,10 +435,8 @@ function inspectCommand(command, harness, file, options, findings, probeCache, p
       return;
     }
     if (existsSync(script) && realpathSync(script) !== realMainPath()) {
-      findings.push(new LayerError({
+      findings.push(new CosplayError({
         name: 'doctor',
-        scope: errorScope,
-        docs: errorDocs,
         method: 'inspectCommand',
         message: '%s: hook script is a different cosplaying install. Run cosplaying install from the install you want the harness to use.',
         args: [file],
@@ -489,10 +445,8 @@ function inspectCommand(command, harness, file, options, findings, probeCache, p
     }
   }
   if (!canProbe(executable, script)) {
-    findings.push(new LayerError({
+    findings.push(new CosplayError({
       name: 'doctor',
-      scope: errorScope,
-      docs: errorDocs,
       method: 'inspectCommand',
       message: '%s: unexpected executable %s. Run cosplaying install so the hook starts with node and this package\'s main.js, or with the cosplaying executable.',
       args: [file, executable],
@@ -511,10 +465,8 @@ function inspectCommand(command, harness, file, options, findings, probeCache, p
     probeCache.set(cacheKey, probe);
   }
   if (!probe.version || probe.version.status !== 0 || (probe.version.stdout || '').trim() !== packageVersion()) {
-    findings.push(new LayerError({
+    findings.push(new CosplayError({
       name: 'doctor',
-      scope: errorScope,
-      docs: errorDocs,
       method: 'inspectCommand',
       message: '%s: hook --version did not match %s. Run cosplaying install so the hook uses this package version.',
       args: [file, packageVersion()],
@@ -522,10 +474,8 @@ function inspectCommand(command, harness, file, options, findings, probeCache, p
     return;
   }
   if (!probe.help || probe.help.status !== 0) {
-    findings.push(new LayerError({
+    findings.push(new CosplayError({
       name: 'doctor',
-      scope: errorScope,
-      docs: errorDocs,
       method: 'inspectCommand',
       message: '%s: hook --help failed. Run the hook executable with --help, fix the error it prints, then run cosplaying doctor again.',
       args: [file],
@@ -535,10 +485,8 @@ function inspectCommand(command, harness, file, options, findings, probeCache, p
   const lines = (probe.help.stdout || '').split('\n');
   for (const name of ['hook', 'agent-hook', 'rewrite', 'install', 'uninstall', 'doctor', 'plugin']) {
     if (!lines.some((line) => new RegExp(`^\\s+${name}\\b`).test(line))) {
-      findings.push(new LayerError({
+      findings.push(new CosplayError({
         name: 'doctor',
-        scope: errorScope,
-        docs: errorDocs,
         method: 'inspectCommand',
         message: '%s: hook --help is missing %s. Update --help so the command is a line indented two spaces, with examples indented four spaces, then run cosplaying doctor again.',
         args: [file, name],
@@ -548,10 +496,8 @@ function inspectCommand(command, harness, file, options, findings, probeCache, p
   for (const plugin of plugins || []) {
     const index = lines.findIndex((line) => new RegExp(`^\\s+${plugin.command}\\b`).test(line));
     if (index < 0) {
-      findings.push(new LayerError({
+      findings.push(new CosplayError({
         name: 'doctor',
-        scope: errorScope,
-        docs: errorDocs,
         method: 'inspectCommand',
         message: '%s: hook --help is missing %s. Update --help so the command is a line indented two spaces, with examples indented four spaces, then run cosplaying doctor again.',
         args: [file, plugin.command],
@@ -562,10 +508,8 @@ function inspectCommand(command, harness, file, options, findings, probeCache, p
     const declared = plugin.descriptor.examples;
     for (const example of declared) {
       if (!examples.includes(`    ${example}`)) {
-        findings.push(new LayerError({
+        findings.push(new CosplayError({
           name: 'doctor',
-          scope: errorScope,
-          docs: errorDocs,
           method: 'inspectCommand',
           message: '%s: hook --help is missing %s. Update --help so the command is a line indented two spaces, with examples indented four spaces, then run cosplaying doctor again.',
           args: [file, `${plugin.command} example`],
@@ -594,10 +538,8 @@ function checkPathVersion(options, findings) {
     });
   } catch (error) {
     const message = error.message;
-    findings.push(new LayerError({
+    findings.push(new CosplayError({
       name: 'doctor',
-      scope: errorScope,
-      docs: errorDocs,
       method: 'checkPathVersion',
       message: 'PATH: version %s differs from %s. Update the cosplaying executable on PATH so it matches this install.',
       args: [message, packageVersion()],
@@ -606,10 +548,8 @@ function checkPathVersion(options, findings) {
   }
   const got = (result?.stdout || '').trim();
   if (!result || result.status !== 0 || got !== packageVersion()) {
-    findings.push(new LayerError({
+    findings.push(new CosplayError({
       name: 'doctor',
-      scope: errorScope,
-      docs: errorDocs,
       method: 'checkPathVersion',
       message: 'PATH: version %s differs from %s. Update the cosplaying executable on PATH so it matches this install.',
       args: [got || '(empty)', packageVersion()],

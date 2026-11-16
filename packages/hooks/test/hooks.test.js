@@ -54,7 +54,7 @@ test('writeTextAtomic refuses a symlink and still writes a regular file', () => 
     writeFileSync(target, original);
     symlinkSync(target, link);
     assert.throws(() => writeTextAtomic(link, 'changed'), (error) => {
-      assert.equal(error.name, 'LayerError');
+      assert.equal(error.name, 'CosplayError');
       assert.equal(error.method, 'writeTextAtomic');
       assert.match(error.message, /link\.txt/);
       assert.match(error.message, /Do not follow the symlink/);
@@ -101,7 +101,7 @@ test('invalid UTF-8 hook files are not installed or removed', () => {
     const bytes = Buffer.concat([Buffer.from([0xff]), Buffer.from('// cosplaying:pi\n')]);
     writeFileSync(file, bytes);
     assert.throws(() => installHookFile(file, '// cosplaying:pi', '// cosplaying:pi\nexport {}\n'), (error) => {
-      assert.equal(error.name, 'LayerError');
+      assert.equal(error.name, 'CosplayError');
       assert.equal(error.method, 'readUtf8File');
       assert.match(error.message, /not valid UTF-8/);
       assert.match(error.message, /packages\/hooks\/README\.md#error-[0-9a-f]{6}/);
@@ -109,7 +109,7 @@ test('invalid UTF-8 hook files are not installed or removed', () => {
     });
     assert.deepEqual(readFileSync(file), bytes);
     assert.throws(() => uninstallHookFile(file, '// cosplaying:pi'), (error) => {
-      assert.equal(error.name, 'LayerError');
+      assert.equal(error.name, 'CosplayError');
       assert.equal(error.method, 'readUtf8File');
       return true;
     });

@@ -2,25 +2,23 @@ import { Command } from 'commander';
 import { existsSync, realpathSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { normalizeIdentity } from 'cosplaying/attribution';
-import { loadConfig } from './config.js';
 import {
   defaultSpawn,
   installPlugin,
   listPlugins,
-  loadConfiguredPlugins,
   resolveRealBin,
   uninstallPlugin,
 } from 'cosplaying/plugin';
+import { bundledPlugins } from './bundled.js';
+import { disableBundledPlugin, enableBundledPlugin } from './enable.js';
+import { loadPlugins } from './plugins.js';
 import { attributionApi, runAgentHook } from './agent-hook.js';
 import { runDoctor } from './doctor.js';
 import { adapters, getAdapter } from 'cosplaying/adapters';
 import { gitRoot, installAll, installHarness, uninstallAll } from './harness.js';
 import { commandPrefix, packageVersion, realMainPath } from './paths.js';
-import { LayerError } from '@mcp-layer/error';
+import { CosplayError } from 'cosplaying/errors';
 import { rewriteModelFlags, rewriteShellCommand } from './shell.js';
-
-const errorScope = 'cosplaying';
-const errorDocs = 'github.com/3rd-Eden/cosplay/tree/main/packages';
 
 const CORE_HELP = [
   ['hook', 'Run a wrapped command'],
@@ -29,7 +27,7 @@ const CORE_HELP = [
   ['install', 'Install harness hooks'],
   ['uninstall', 'Remove harness hooks'],
   ['doctor', 'Check hooks, plugins, and config'],
-  ['plugin', 'Install, uninstall, or list plugins'],
+  ['plugin', 'Install, uninstall, list, enable, or disable plugins'],
 ];
 
 /**
@@ -48,10 +46,8 @@ export function renderHelp(plugins = []) {
  * @returns {string}
  */
 export function unknownHarness(id) {
-  return new LayerError({
+  return new CosplayError({
     name: 'cli',
-    scope: errorScope,
-    docs: errorDocs,
     method: 'install',
     message: 'unknown harness %s. Supported harnesses: %s. Run cosplaying install --harness <name> with one of those harness names.',
     args: [id, adapters.map((item) => item.id).join(', ')],
@@ -162,7 +158,7 @@ export async function main(argv, options = {}) {
     .action(async (opts) => {
       code = await runDoctorCommand(opts, context);
     });
-  const plugin = program.command('plugin').description('Install, uninstall, or list plugins');
+  const plugin = program.command('plugin').description('Install, uninstall, list, enable, or disable plugins');
   plugin.command('list').description('List plugins').action(async () => {
     code = await runPlugin(['list'], context);
   });
@@ -172,14 +168,14 @@ export async function main(argv, options = {}) {
   plugin.command('uninstall').argument('[name]').action(async (name) => {
     code = await runPlugin(name ? ['uninstall', name] : ['uninstall'], context);
   });
+  plugin.command('enable').argument('[name]').action(async (name) => {
+    code = await runPlugin(name ? ['enable', name] : ['enable'], context);
+  });
+  plugin.command('disable').argument('[name]').action(async (name) => {
+    code = await runPlugin(name ? ['disable', name] : ['disable'], context);
+  });
   plugin.action(() => {
-    report(context.stderr, new LayerError({
-      name: 'cli',
-      scope: errorScope,
-      docs: errorDocs,
-      method: 'plugin',
-      message: 'cosplaying plugin: expected install, uninstall, or list. Run cosplaying plugin install, cosplaying plugin uninstall <name>, or cosplaying plugin list.',
-    }).message);
+    report(context.stderr, pluginUsage());
     code = 2;
   });
   program.addHelpText('afterAll', pluginHelp(await pluginsForHelp(context)));
@@ -207,10 +203,8 @@ function commandError(context, error) {
   if (code === 'commander.version') return 0;
   if (code === 'commander.unknownCommand') {
     const name = message.match(/'([^']+)'/)?.[1] || message;
-    report(context.stderr, new LayerError({
+    report(context.stderr, new CosplayError({
       name: 'cli',
-      scope: errorScope,
-      docs: errorDocs,
       method: 'main',
       message: 'unknown command %s. Run cosplaying --help and use hook, agent-hook, rewrite, install, uninstall, doctor, or plugin.',
       args: [name],
@@ -218,10 +212,8 @@ function commandError(context, error) {
     return 2;
   }
   if (code.startsWith('commander.')) {
-    report(context.stderr, new LayerError({
+    report(context.stderr, new CosplayError({
       name: 'cli',
-      scope: errorScope,
-      docs: errorDocs,
       method: 'main',
       message: 'could not parse arguments: %s. Run cosplaying --help and fix the flags. String flags need a value.',
       args: [message],
@@ -238,11 +230,21 @@ function commandError(context, error) {
  */
 async function pluginsForHelp(context) {
   try {
-    const config = loadConfig(context);
-    return await loadConfiguredPlugins(config.plugins, context);
+    return (await loadPlugins(context)).plugins;
   } catch {
     return [];
   }
+}
+
+/**
+ * @returns {string}
+ */
+function pluginUsage() {
+  return new CosplayError({
+    name: 'cli',
+    method: 'plugin',
+    message: 'cosplaying plugin: expected install, uninstall, list, enable, or disable. Run cosplaying plugin install, cosplaying plugin uninstall <name>, cosplaying plugin list, cosplaying plugin enable <name>, or cosplaying plugin disable <name>.',
+  }).message;
 }
 
 /**
@@ -256,10 +258,8 @@ function resolveCliModel(parsed, env) {
     if (!raw || raw.startsWith('-') || !/^[A-Za-z0-9_-]+$/.test(raw)) {
       return {
         model: '',
-        error: new LayerError({
+        error: new CosplayError({
           name: 'cli',
-          scope: errorScope,
-          docs: errorDocs,
           method: 'resolveModel',
           message: '--model-base64 must be base64url. Pass the model name with --model <name> when typing the command. Pass the model as plain text with --model <name>. Hooks pass --model-base64 for you.',
         }).message,
@@ -271,10 +271,8 @@ function resolveCliModel(parsed, env) {
     } catch {
       return {
         model: '',
-        error: new LayerError({
+        error: new CosplayError({
           name: 'cli',
-          scope: errorScope,
-          docs: errorDocs,
           method: 'resolveModel',
           message: '--model-base64 must be base64url. Pass the model name with --model <name> when typing the command. Pass the model as plain text with --model <name>. Hooks pass --model-base64 for you.',
         }).message,
@@ -284,10 +282,8 @@ function resolveCliModel(parsed, env) {
     if (!model) {
       return {
         model: '',
-        error: new LayerError({
+        error: new CosplayError({
           name: 'cli',
-          scope: errorScope,
-          docs: errorDocs,
           method: 'resolveModel',
           message: '--model-base64 did not contain a model name. Encode a non-empty model with base64url, or pass --model <name>.',
         }).message,
@@ -300,10 +296,8 @@ function resolveCliModel(parsed, env) {
     if (!raw.trim() || raw.trim().startsWith('-')) {
       return {
         model: '',
-        error: new LayerError({
+        error: new CosplayError({
           name: 'cli',
-          scope: errorScope,
-          docs: errorDocs,
           method: 'resolveModel',
           message: '--model requires the model name as plain text. Run cosplaying hook --model <name> -- <command>. Do not leave the value empty or starting with a dash.',
         }).message,
@@ -335,18 +329,14 @@ async function runHook(argv, commandArgs, options, context) {
     const flag = commandArgs.slice(1).find((token) => token.startsWith('-'));
     if (flag) {
       report(context.stderr, HOOK_FLAGS.has(flag)
-        ? new LayerError({
+        ? new CosplayError({
           name: 'cli',
-          scope: errorScope,
-          docs: errorDocs,
           method: 'hook',
           message: '%s is after the command. Put hook flags before the command, then --, then the command. Run cosplaying hook --model <name> -- <command>. Do not place --model, --model-base64, or --harness after the command name.',
           args: [flag],
         }).message
-        : new LayerError({
+        : new CosplayError({
           name: 'cli',
-          scope: errorScope,
-          docs: errorDocs,
           method: 'hook',
           message: 'could not parse arguments: %s. Run cosplaying --help and fix the flags. String flags need a value.',
           args: [`${flag} is after the command`],
@@ -365,10 +355,8 @@ async function runHook(argv, commandArgs, options, context) {
     return 2;
   }
   if (commandArgs.length === 0) {
-    report(context.stderr, new LayerError({
+    report(context.stderr, new CosplayError({
       name: 'cli',
-      scope: errorScope,
-      docs: errorDocs,
       method: 'hook',
       message: 'cosplaying hook: expected a command. Run cosplaying hook --model <name> -- <command> [args].',
     }).message);
@@ -378,22 +366,27 @@ async function runHook(argv, commandArgs, options, context) {
   let plugins;
   let config;
   try {
-    config = loadConfig(context);
-    plugins = await loadConfiguredPlugins(config.plugins, context);
+    ({ config, plugins } = await loadPlugins(context));
   } catch (error) {
     report(context.stderr, error.message);
     return 1;
   }
   const plugin = plugins.find((entry) => entry.command === command);
   if (!plugin) {
-    report(context.stderr, new LayerError({
-      name: 'cli',
-      scope: errorScope,
-      docs: errorDocs,
-      method: 'hook',
-      message: 'no plugin is installed for %s. Install it with cosplaying plugin install <git-url-or-path>, or add its path to the plugins list.',
-      args: [command],
-    }).message);
+    const shipped = bundledPlugins();
+    report(context.stderr, shipped[command]
+      ? new CosplayError({
+        name: 'cli',
+        method: 'hook',
+        message: 'shipped plugin %s is off. Run cosplaying plugin enable %s, or add "%s" to the plugins list.',
+        args: [command, command, command],
+      }).message
+      : new CosplayError({
+        name: 'cli',
+        method: 'hook',
+        message: 'no plugin is installed for %s. Install it with cosplaying plugin install <git-url-or-path>, or add its path to the plugins list.',
+        args: [command],
+      }).message);
     return 1;
   }
   const own = [realMainPath()];
@@ -443,10 +436,8 @@ async function runRewrite(words, options, context) {
   if (options.harness !== undefined) present.harness = options.harness;
   const command = words.join(' ');
   if (!command.trim()) {
-    report(context.stderr, new LayerError({
+    report(context.stderr, new CosplayError({
       name: 'cli',
-      scope: errorScope,
-      docs: errorDocs,
       method: 'rewrite',
       message: 'cosplaying rewrite: expected a command. Run cosplaying rewrite --shell \'<command>\' or cosplaying rewrite <command> [args].',
     }).message);
@@ -460,8 +451,7 @@ async function runRewrite(words, options, context) {
   /** @type {Record<string, string>} */
   let routes = {};
   try {
-    const config = loadConfig(context);
-    const plugins = await loadConfiguredPlugins(config.plugins, context);
+    const { plugins } = await loadPlugins(context);
     for (const plugin of plugins) {
       if (plugin.descriptor.intercept === false) continue;
       routes[plugin.command] = commandPrefix(plugin.command, resolved.model, context.platform);
@@ -565,10 +555,8 @@ async function runInstall(options, context, remove) {
 async function runDoctorCommand(options, context) {
   const projectDir = options.projectDir || undefined;
   if (projectDir && !isDirectory(projectDir)) {
-    report(context.stderr, new LayerError({
+    report(context.stderr, new CosplayError({
       name: 'cli',
-      scope: errorScope,
-      docs: errorDocs,
       method: 'runDoctor',
       message: '%s is not a directory. Pass --project-dir an existing directory. Create the directory, or pass --project-dir a path that exists and is a directory.',
       args: [projectDir],
@@ -590,8 +578,7 @@ async function runDoctorCommand(options, context) {
  */
 async function interceptingCommands(context) {
   try {
-    const config = loadConfig(context);
-    const plugins = await loadConfiguredPlugins(config.plugins, context);
+    const { plugins } = await loadPlugins(context);
     return plugins.filter((plugin) => plugin.descriptor.intercept !== false).map((plugin) => plugin.command);
   } catch {
     return [];
@@ -610,14 +597,50 @@ async function runPlugin(argv, context) {
     for (const plugin of plugins) {
       context.stdout.write(`${plugin.name}\t${plugin.command}\t${plugin.kind}\t${plugin.directory}\n`);
     }
+    let configured;
+    try {
+      configured = (await loadPlugins(context)).plugins;
+    } catch (error) {
+      report(context.stderr, error.message);
+      return 1;
+    }
+    const seen = new Set(plugins.map((plugin) => plugin.command));
+    for (const plugin of configured) {
+      if (plugin.kind !== 'bundled' || seen.has(plugin.command)) continue;
+      context.stdout.write(`${plugin.name}\t${plugin.command}\tbundled\t${plugin.directory}\n`);
+    }
+    return 0;
+  }
+  if (action === 'enable' || action === 'disable') {
+    if (!source) {
+      report(context.stderr, action === 'enable'
+        ? new CosplayError({
+          name: 'cli',
+          method: 'plugin',
+          message: 'cosplaying plugin enable: expected a shipped plugin name. Run cosplaying plugin enable git or cosplaying plugin enable gh.',
+        }).message
+        : new CosplayError({
+          name: 'cli',
+          method: 'plugin',
+          message: 'cosplaying plugin disable: expected a shipped plugin name. Run cosplaying plugin disable git or cosplaying plugin disable gh.',
+        }).message);
+      return 2;
+    }
+    const result = action === 'enable'
+      ? await enableBundledPlugin(source, context)
+      : await disableBundledPlugin(source, context);
+    if (!result.ok) {
+      report(context.stderr, result.error);
+      return result.status;
+    }
+    await regenerateExtensions(context);
+    context.stdout.write(action === 'enable' ? `${result.name}\t${result.directory}\n` : `${result.name}\n`);
     return 0;
   }
   if (action === 'install') {
     if (!source) {
-      report(context.stderr, new LayerError({
+      report(context.stderr, new CosplayError({
         name: 'cli',
-        scope: errorScope,
-        docs: errorDocs,
         method: 'plugin',
         message: 'cosplaying plugin install: expected a git URL or local path. Run cosplaying plugin install <git-url-or-path>.',
       }).message);
@@ -634,10 +657,8 @@ async function runPlugin(argv, context) {
   }
   if (action === 'uninstall') {
     if (!source) {
-      report(context.stderr, new LayerError({
+      report(context.stderr, new CosplayError({
         name: 'cli',
-        scope: errorScope,
-        docs: errorDocs,
         method: 'plugin',
         message: 'cosplaying plugin uninstall: expected a plugin name. Run cosplaying plugin list, then cosplaying plugin uninstall <name>.',
       }).message);
@@ -652,13 +673,7 @@ async function runPlugin(argv, context) {
     context.stdout.write(`${source}\n`);
     return 0;
   }
-  report(context.stderr, new LayerError({
-    name: 'cli',
-    scope: errorScope,
-    docs: errorDocs,
-    method: 'plugin',
-    message: 'cosplaying plugin: expected install, uninstall, or list. Run cosplaying plugin install, cosplaying plugin uninstall <name>, or cosplaying plugin list.',
-  }).message);
+  report(context.stderr, pluginUsage());
   return 2;
 }
 

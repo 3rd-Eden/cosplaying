@@ -7,11 +7,8 @@ import {
   statSync,
 } from 'node:fs';
 import path from 'node:path';
-import { LayerError } from '@mcp-layer/error';
+import { CosplayError } from 'cosplaying/errors';
 import writeFileAtomic from 'write-file-atomic';
-
-const errorScope = 'cosplaying';
-const errorDocs = 'github.com/3rd-Eden/cosplay/tree/main/packages';
 
 /**
  * @param {string} value
@@ -83,10 +80,8 @@ export function readJsonConfig(file) {
     text = readFileSync(file);
   } catch (error) {
     if (error.code === 'ENOENT') return {};
-    throw new LayerError({
+    throw new CosplayError({
       name: 'hooks',
-      scope: errorScope,
-      docs: errorDocs,
       method: 'readJsonConfig',
       message: 'could not read %s: %s. Fix the permissions on that file, or move it aside and run cosplaying install again.',
       args: [file, error.message],
@@ -97,10 +92,8 @@ export function readJsonConfig(file) {
   try {
     decoded = new TextDecoder('utf-8', { fatal: true }).decode(text);
   } catch {
-    throw new LayerError({
+    throw new CosplayError({
       name: 'hooks',
-      scope: errorScope,
-      docs: errorDocs,
       method: 'readJsonConfig',
       message: 'invalid config %s: file is not valid UTF-8. Replace the file with UTF-8 JSON, or move it aside and run cosplaying install again.',
       args: [file],
@@ -110,10 +103,8 @@ export function readJsonConfig(file) {
   try {
     parsed = JSON.parse(decoded);
   } catch (error) {
-    throw new LayerError({
+    throw new CosplayError({
       name: 'hooks',
-      scope: errorScope,
-      docs: errorDocs,
       method: 'readJsonConfig',
       message: 'invalid config %s: %s. Fix the JSON syntax, or move the file aside and run cosplaying install again.',
       args: [file, error.message],
@@ -121,10 +112,8 @@ export function readJsonConfig(file) {
     });
   }
   if (!isRecord(parsed)) {
-    throw new LayerError({
+    throw new CosplayError({
       name: 'hooks',
-      scope: errorScope,
-      docs: errorDocs,
       method: 'readJsonConfig',
       message: 'invalid config %s: config must contain a top-level object. Replace the file with a JSON object, or move it aside and run cosplaying install again.',
       args: [file],
@@ -144,10 +133,8 @@ export function writeTextAtomic(file, text) {
   mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
   const info = lstatSync(file, { throwIfNoEntry: false });
   if (info?.isSymbolicLink()) {
-    throw new LayerError({
+    throw new CosplayError({
       name: 'hooks',
-      scope: errorScope,
-      docs: errorDocs,
       method: 'writeTextAtomic',
       message: 'refusing to write %s because it is a symlink. Do not follow the symlink. Replace the file with a regular file and retry.',
       args: [file],
@@ -171,10 +158,8 @@ export function readUtf8File(file) {
   const bytes = readFileSync(file);
   const text = bytes.toString('utf8');
   if (!Buffer.from(text, 'utf8').equals(bytes)) {
-    throw new LayerError({
+    throw new CosplayError({
       name: 'hooks',
-      scope: errorScope,
-      docs: errorDocs,
       method: 'readUtf8File',
       message: 'invalid config %s: file is not valid UTF-8. Replace the file with UTF-8 JSON, or move it aside and run cosplaying install again.',
       args: [file],
@@ -194,10 +179,8 @@ export function writeJsonAtomic(file, value) {
     current = readFileSync(file, 'utf8');
   } catch (error) {
     if (error.code !== 'ENOENT') {
-      throw new LayerError({
+      throw new CosplayError({
         name: 'hooks',
-        scope: errorScope,
-        docs: errorDocs,
         method: 'writeJsonAtomic',
         message: 'could not read %s: %s. Fix the permissions on that file, or move it aside and run cosplaying install again.',
         args: [file, error.message],
@@ -209,11 +192,9 @@ export function writeJsonAtomic(file, value) {
   try {
     writeTextAtomic(file, rendered);
   } catch (error) {
-    if (error instanceof LayerError) throw error;
-    throw new LayerError({
+    if (error instanceof CosplayError) throw error;
+    throw new CosplayError({
       name: 'hooks',
-      scope: errorScope,
-      docs: errorDocs,
       method: 'writeJsonAtomic',
       message: 'could not write %s: %s. Make the parent directory writable and run cosplaying install again.',
       args: [file, error.message],
@@ -234,10 +215,8 @@ export function writeJsonAtomic(file, value) {
  */
 export function reconcileHooks(value, owner, additions, { version } = {}) {
   if (!isRecord(value)) {
-    throw new LayerError({
+    throw new CosplayError({
       name: 'hooks',
-      scope: errorScope,
-      docs: errorDocs,
       method: 'reconcileHooks',
       message: 'invalid config %s: config must contain a top-level object. Replace the file with a JSON object, or move it aside and run cosplaying install again.',
       args: ['config'],
@@ -247,10 +226,8 @@ export function reconcileHooks(value, owner, additions, { version } = {}) {
   if (version !== undefined && !Object.hasOwn(next, 'version')) next.version = version;
   const hooks = isRecord(next.hooks) ? { ...next.hooks } : {};
   if (next.hooks !== undefined && !isRecord(next.hooks)) {
-    throw new LayerError({
+    throw new CosplayError({
       name: 'hooks',
-      scope: errorScope,
-      docs: errorDocs,
       method: 'reconcileHooks',
       message: 'hooks must be an object. Set hooks to an object of event arrays, or delete hooks and run cosplaying install again.',
     });
@@ -258,10 +235,8 @@ export function reconcileHooks(value, owner, additions, { version } = {}) {
   for (const [event, entries] of Object.entries(additions)) {
     const existing = hooks[event];
     if (existing !== undefined && !Array.isArray(existing)) {
-      throw new LayerError({
+      throw new CosplayError({
         name: 'hooks',
-        scope: errorScope,
-        docs: errorDocs,
         method: 'reconcileHooks',
         message: 'hooks.%s must be an array. Set that event to an array of hook objects, or delete it and run cosplaying install again.',
         args: [event],
@@ -332,12 +307,10 @@ export function installHookFile(file, marker, contents) {
   try {
     current = readUtf8File(file);
   } catch (error) {
-    if (error instanceof LayerError) throw error;
+    if (error instanceof CosplayError) throw error;
     if (error.code !== 'ENOENT') {
-      throw new LayerError({
+      throw new CosplayError({
         name: 'hooks',
-        scope: errorScope,
-        docs: errorDocs,
         method: 'installHookFile',
         message: 'could not read %s: %s. Fix the permissions on that file, or move it aside and run cosplaying install again.',
         args: [file, error.message],
@@ -346,10 +319,8 @@ export function installHookFile(file, marker, contents) {
     }
   }
   if (current !== null && !current.includes(marker) && current !== contents) {
-    throw new LayerError({
+    throw new CosplayError({
       name: 'hooks',
-      scope: errorScope,
-      docs: errorDocs,
       method: 'installHookFile',
       message: 'refusing to replace unmanaged hook file %s. Move the file aside or add the cosplaying marker comment, then run cosplaying install again.',
       args: [file],
@@ -359,11 +330,9 @@ export function installHookFile(file, marker, contents) {
   try {
     writeTextAtomic(file, contents);
   } catch (error) {
-    if (error instanceof LayerError) throw error;
-    throw new LayerError({
+    if (error instanceof CosplayError) throw error;
+    throw new CosplayError({
       name: 'hooks',
-      scope: errorScope,
-      docs: errorDocs,
       method: 'installHookFile',
       message: 'could not write %s: %s. Make the parent directory writable and run cosplaying install again.',
       args: [file, error.message],
@@ -384,12 +353,10 @@ export function uninstallHookFile(file, marker) {
   try {
     current = readUtf8File(file);
   } catch (error) {
-    if (error instanceof LayerError) throw error;
+    if (error instanceof CosplayError) throw error;
     if (error.code === 'ENOENT') return false;
-    throw new LayerError({
+    throw new CosplayError({
       name: 'hooks',
-      scope: errorScope,
-      docs: errorDocs,
       method: 'uninstallHookFile',
       message: 'could not read %s: %s. Fix the permissions on that file, or move it aside and run cosplaying install again.',
       args: [file, error.message],

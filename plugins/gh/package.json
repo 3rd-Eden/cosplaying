@@ -1,0 +1,8 @@
+{
+  "name": "gh",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Attribute GitHub CLI text writes.",
+  "type": "module",
+  "main": "./index.js"
+}

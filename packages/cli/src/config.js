@@ -1,12 +1,9 @@
 import { cosmiconfigSync } from 'cosmiconfig';
-import { LayerError } from '@mcp-layer/error';
+import { CosplayError } from 'cosplaying/errors';
 import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import path from 'node:path';
-import { configSchema, envSchema, fileSchema, schemaIssues } from './config-schema.js';
-
-const errorScope = 'cosplaying';
-const errorDocs = 'github.com/3rd-Eden/cosplay/tree/main/packages';
+import { configSchema, fileSchema, schemaIssues } from './config-schema.js';
 
 /** @type {string} */
 export const DEFAULT_LINK = 'https://www.npmjs.com/package/cosplaying';
@@ -56,10 +53,8 @@ const PROJECT_CONFIG_NAMES = ['.cosplaying.json', '.cosplaying.yaml', '.cosplayi
 function assertSingleConfig(directory, names) {
   const present = names.filter((name) => existsSync(path.join(directory, name)));
   if (present.length < 2) return;
-  throw new LayerError({
+  throw new CosplayError({
     name: 'cli',
-    scope: errorScope,
-    docs: errorDocs,
     method: 'loadConfig',
     message: 'settings directory %s has more than one config file: %s. Keep one of .cosplaying.json, .cosplaying.yaml, or .cosplaying.yml and delete the others. Attribution stays blocked until that directory has one file.',
     args: [directory, present.join(', ')],
@@ -76,10 +71,8 @@ function rejectConfigModel(file, config) {
   const nested = attribution && typeof attribution === 'object' && !Array.isArray(attribution)
     && Object.hasOwn(attribution, 'model');
   if (!Object.hasOwn(config, 'model') && !nested) return;
-  throw new LayerError({
+  throw new CosplayError({
     name: 'cli',
-    scope: errorScope,
-    docs: errorDocs,
     method: 'loadConfig',
     message: 'settings file %s cannot set the model. Pass --model <name> or set COSPLAYING_MODEL. Remove the model field from that file.',
     args: [file],
@@ -89,40 +82,79 @@ function rejectConfigModel(file, config) {
 /**
  * @param {import('cosmiconfig').PublicExplorerSync} explorer
  * @param {string} directory
- * @param {string[]} [names]
+ * @returns {import('cosmiconfig').CosmiconfigResult}
  */
-function read(explorer, directory, names) {
-  let found;
+function searchConfig(explorer, directory) {
   try {
-    found = explorer.search(directory);
+    return explorer.search(directory);
   } catch (error) {
-    if (error instanceof LayerError) throw error;
+    if (error instanceof CosplayError) throw error;
     const file = error.filepath || directory;
-    throw new LayerError({
+    throw new CosplayError({
       name: 'cli',
-      scope: errorScope,
-      docs: errorDocs,
       method: 'loadConfig',
       message: 'settings file %s could not be read: %s. Fix the JSON or YAML syntax, or delete the file to use the defaults.',
       args: [file, error.message],
       cause: error,
     });
   }
+}
+
+/**
+ * @param {import('cosmiconfig').PublicExplorerSync} explorer
+ * @param {string} directory
+ * @param {string[]} [names]
+ */
+function read(explorer, directory, names) {
+  const found = searchConfig(explorer, directory);
   if (!found) return {};
   if (names) assertSingleConfig(path.dirname(found.filepath), names);
   rejectConfigModel(found.filepath, found.config);
   const parsed = fileSchema.safeParse(found.config);
   if (!parsed.success) {
-    throw new LayerError({
+    throw new CosplayError({
       name: 'cli',
-      scope: errorScope,
-      docs: errorDocs,
       method: 'loadConfig',
       message: 'settings file %s does not match the config schema: %s. Edit that file so link, plugins, variables, and attribution.templates match the documented shape, or delete the file to use the defaults.',
       args: [found.filepath, schemaIssues(parsed.error)],
     });
   }
   return parsed.data;
+}
+
+const USER_CONFIG_NAMES = ['config.json', 'config.yaml', 'config.yml'];
+
+/**
+ * User settings files that exist. Cosmiconfig would return only the first.
+ * @param {{home?: string}} [options]
+ * @returns {string[]}
+ */
+export function userConfigFiles({ home = homedir() } = {}) {
+  const directory = userConfigDirectory({ home });
+  return USER_CONFIG_NAMES
+    .filter((name) => existsSync(path.join(directory, name)))
+    .map((name) => path.join(directory, name));
+}
+
+/**
+ * The project settings file cosmiconfig would load, including its raw contents.
+ * @param {{cwd?: string}} [options]
+ * @returns {import('cosmiconfig').CosmiconfigResult}
+ */
+export function findProjectConfig({ cwd = process.cwd() } = {}) {
+  const found = searchConfig(projectConfig, cwd);
+  if (!found) return null;
+  assertSingleConfig(path.dirname(found.filepath), PROJECT_CONFIG_NAMES);
+  return found;
+}
+
+/**
+ * The user settings file cosmiconfig would load, including its raw contents.
+ * @param {{home?: string}} [options]
+ * @returns {import('cosmiconfig').CosmiconfigResult}
+ */
+export function findUserConfig({ home = homedir() } = {}) {
+  return searchConfig(userConfig, userConfigDirectory({ home }));
 }
 
 /**
@@ -135,14 +167,13 @@ export function userConfigDirectory({ home = homedir() } = {}) {
 }
 
 /**
- * @param {{env?: NodeJS.ProcessEnv, cwd?: string, home?: string}} [options]
+ * @param {{cwd?: string, home?: string}} [options]
  */
-export function loadConfig({ env = process.env, cwd = process.cwd(), home = homedir() } = {}) {
+export function loadConfig({ cwd = process.cwd(), home = homedir() } = {}) {
   const merged = [
     defaults,
     read(userConfig, userConfigDirectory({ home })),
     read(projectConfig, cwd, PROJECT_CONFIG_NAMES),
-    envSchema.parse(env),
   ].reduce(merge);
   return configSchema.parse(merged);
 }

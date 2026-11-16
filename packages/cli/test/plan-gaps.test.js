@@ -507,7 +507,7 @@ export default async function run(args, context) {
   }
 });
 
-test('session start stores a hashed model file and the env trailer wins', () => {
+test('session start stores a hashed model file and the project trailer stays', () => {
   const context = isolated();
   const { home, cwd } = context;
   const env = envFor(context);
@@ -543,9 +543,12 @@ test('session start stores a hashed model file and the env trailer wins', () => 
     assert.match(fromFile.stdout, /AI-Assisted-By: Example Docs file\n/);
     const fromEnv = run(['hook', '--model', 'Example', '--', 'notify', '--message', 'hi'], home, cwd, {
       ...env,
+      COSPLAYING_ATTRIBUTION_TEMPLATE: 'env {model}',
+      COSPLAYING_ATTRIBUTION_TEMPLATE_MARKDOWN: 'env markdown {model}',
       COSPLAYING_ATTRIBUTION_TEMPLATE_TRAILER: '{model} only',
+      COSPLAYING_LINK: 'https://example.com/env',
     });
-    assert.match(fromEnv.stdout, /AI-Assisted-By: Example only\n/);
+    assert.match(fromEnv.stdout, /AI-Assisted-By: Example Docs file\n/);
   } finally {
     rmSync(home, { recursive: true, force: true });
     rmSync(cwd, { recursive: true, force: true });

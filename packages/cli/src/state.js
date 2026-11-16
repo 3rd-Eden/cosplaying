@@ -1,13 +1,10 @@
 import { createHash } from 'node:crypto';
 import { readFileSync, rmSync } from 'node:fs';
 import path from 'node:path';
-import { LayerError } from '@mcp-layer/error';
+import { CosplayError } from 'cosplaying/errors';
 import { normalizeIdentity } from 'cosplaying/attribution';
 import { userConfigDirectory } from './config.js';
 import { writeTextAtomic } from 'cosplaying/hooks';
-
-const errorScope = 'cosplaying';
-const errorDocs = 'github.com/3rd-Eden/cosplay/tree/main/packages';
 
 /**
  * @param {string} directory
@@ -31,10 +28,8 @@ export function saveSessionModel(options, sessionId, model) {
   try {
     writeTextAtomic(file, JSON.stringify({ model: normalized }));
   } catch (error) {
-    throw new LayerError({
+    throw new CosplayError({
       name: 'cli',
-      scope: errorScope,
-      docs: errorDocs,
       method: 'saveSessionModel',
       message: 'could not store the session model in %s: %s. Make the cosplaying config directory writable, then start the agent session again.',
       args: [file, error.message],
@@ -68,10 +63,8 @@ export function clearSessionModel(options, sessionId) {
   try {
     rmSync(file, { force: true });
   } catch (error) {
-    throw new LayerError({
+    throw new CosplayError({
       name: 'cli',
-      scope: errorScope,
-      docs: errorDocs,
       method: 'clearSessionModel',
       message: 'could not store the session model in %s: %s. Make the cosplaying config directory writable, then start the agent session again.',
       args: [file, error.message],

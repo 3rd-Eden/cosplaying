@@ -23,4 +23,4 @@ A missing or empty model throws. An empty link stays empty. Any other link must 
 
 ## Related packages
 
-`replaces` fills `{name}` tags. `cosmiconfig` supplies the template, link, and variables over the defaults. `@cosplaying/cli` passes `annotateMarkdown` and `renderTrailer` to a plugin with the invocation model and the loaded settings. `@cosplaying/plugin` can copy file text and call a renderer; it does not format the byline. Failures throw `@cosplaying/errors`.
+`replaces` fills `{name}` tags. `cosmiconfig` supplies the template, link, and variables over the defaults. `@cosplaying/cli` passes `annotateMarkdown` and `renderTrailer` to a plugin with the invocation model and the loaded settings. `@cosplaying/plugin` can copy file text and call a renderer; it does not format the byline. Failures throw `CosplayError`.

@@ -1,11 +1,14 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, realpathSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { DEFAULT_LINK, loadConfig, userConfigDirectory } from '../src/config.js';
+import { systemEnv, writeSpawnStub } from './spawn-stub.js';
+import { DEFAULT_LINK, DEFAULT_TRAILER, loadConfig, userConfigDirectory } from '../src/config.js';
+
+const notify = fileURLToPath(new URL('../../../examples/notify', import.meta.url));
 
 const bin = fileURLToPath(new URL('../bin/cosplaying.js', import.meta.url));
 
@@ -13,7 +16,7 @@ function temp() {
   return mkdtempSync(path.join(tmpdir(), 'cosplaying-config-'));
 }
 
-test('defaults, then the user file, then the nearest project file, then environment', () => {
+test('defaults, then the user file, then the nearest project file', () => {
   const home = temp();
   const cwd = temp();
   const user = userConfigDirectory({ home });
@@ -31,10 +34,16 @@ test('defaults, then the user file, then the nearest project file, then environm
   const config = loadConfig({
     cwd,
     home,
-    env: { COSPLAYING_LINK: 'https://example.com/env' },
+    env: {
+      COSPLAYING_LINK: 'https://example.com/env',
+      COSPLAYING_ATTRIBUTION_TEMPLATE: 'env {model}',
+      COSPLAYING_ATTRIBUTION_TEMPLATE_MARKDOWN: 'env markdown {model}',
+      COSPLAYING_ATTRIBUTION_TEMPLATE_TRAILER: 'env trailer',
+    },
   });
-  assert.equal(config.link, 'https://example.com/env');
+  assert.equal(config.link, 'https://example.com/project');
   assert.equal(config.markdown, 'user {model}');
+  assert.equal(config.trailer, DEFAULT_TRAILER);
   assert.equal(config.variables.team, 'project');
   assert.equal(config.variables.owner, 'kept');
   assert.deepEqual(config.plugins, ['./notify']);
@@ -141,4 +150,40 @@ test('invalid JSON and invalid YAML config files fail and name the file', () => 
   assert.match(yaml.stderr, /could not be read/);
   assert.match(yaml.stderr, /YAML Error in/);
   assert.equal(yaml.stderr.includes(realpathSync(yamlFile)), true);
+});
+
+test('hook trailer keeps a user variable and lets the project replace the same key', () => {
+  const home = temp();
+  const cwd = temp();
+  try {
+    const userDir = userConfigDirectory({ home });
+    mkdirSync(userDir, { recursive: true });
+    writeFileSync(path.join(userDir, 'config.json'), `${JSON.stringify({
+      variables: { team: 'user', owner: 'kept' },
+      attribution: { templates: { trailer: '{model} {team} {owner}' } },
+    })}\n`);
+    writeFileSync(path.join(cwd, '.cosplaying.json'), `${JSON.stringify({
+      variables: { team: 'project' },
+      plugins: [notify],
+    })}\n`);
+    const program = writeSpawnStub(path.join(home, 'notify'), '#!/bin/sh\nprintf "%s\\n" "$@"\n');
+    const result = spawnSync(process.execPath, [
+      bin, 'hook', '--model', 'Example', '--', 'notify', '--message', 'hi',
+    ], {
+      cwd,
+      encoding: 'utf8',
+      env: {
+        ...systemEnv(),
+        HOME: home,
+        USERPROFILE: home,
+        COSPLAYING_NOTIFY_BIN: program,
+      },
+    });
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.stderr, '');
+    assert.equal(result.stdout, '--message\nhi\nAI-Assisted-By: Example project kept\n');
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+    rmSync(cwd, { recursive: true, force: true });
+  }
 });

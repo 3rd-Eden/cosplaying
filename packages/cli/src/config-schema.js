@@ -32,7 +32,7 @@ export const fileSchema = z.object({
   });
 });
 
-/** Settings after defaults, files, and environment variables are merged. */
+/** Settings after defaults and config files are merged. */
 export const configSchema = z.object({
   markdown: z.string(),
   trailer: z.string(),
@@ -41,18 +41,6 @@ export const configSchema = z.object({
   plugins: z.array(z.string()),
   variables: z.record(z.string(), z.string()),
 });
-
-/** Documented `COSPLAYING_*` overrides, flattened onto the settings object. */
-export const envSchema = z.object({
-  COSPLAYING_ATTRIBUTION_TEMPLATE: z.string().optional(),
-  COSPLAYING_ATTRIBUTION_TEMPLATE_MARKDOWN: z.string().optional(),
-  COSPLAYING_ATTRIBUTION_TEMPLATE_TRAILER: z.string().optional(),
-  COSPLAYING_LINK: z.string().optional(),
-}).transform((env) => defined({
-  markdown: env.COSPLAYING_ATTRIBUTION_TEMPLATE_MARKDOWN ?? env.COSPLAYING_ATTRIBUTION_TEMPLATE,
-  trailer: env.COSPLAYING_ATTRIBUTION_TEMPLATE_TRAILER,
-  link: env.COSPLAYING_LINK,
-}));
 
 /**
  * @param {z.ZodError} error

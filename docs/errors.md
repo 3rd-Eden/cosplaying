@@ -651,7 +651,7 @@ Catalog id: `cli.no-plugin`
 
 `cli(hook)`
 
-hook only runs commands exported by installed plugins. Built-in names are not plugins.
+hook only runs commands exported by installed or enabled plugins. Shipped `git` and `gh` use `cosplaying plugin enable`. Other commands use `cosplaying plugin install`.
 
 Step-by-step resolution:
 1. Install it with cosplaying plugin install <git-url-or-path>, or add its path to the plugins list.
@@ -806,8 +806,8 @@ cosplaying plugin list
 
 </details>
 
-<a id="error-59878836"></a>
-### cosplaying plugin: expected install, uninstall, or list. Run cosplaying plugin install, cosplaying plugin uninstall <name>, or cosplaying plugin list.
+<a id="error-3d7b9676"></a>
+### cosplaying plugin: expected install, uninstall, list, enable, or disable. Run cosplaying plugin install, cosplaying plugin uninstall <name>, cosplaying plugin list, cosplaying plugin enable <name>, or cosplaying plugin disable <name>.
 
 Thrown from: `plugin`
 
@@ -818,13 +818,267 @@ Catalog id: `cli.plugin-usage`
 plugin is a command group. Other words are not subcommands.
 
 Step-by-step resolution:
-1. Run cosplaying plugin install, cosplaying plugin uninstall <name>, or cosplaying plugin list.
+1. Run cosplaying plugin install, cosplaying plugin uninstall <name>, cosplaying plugin list, cosplaying plugin enable <name>, or cosplaying plugin disable <name>.
 
 <details>
 <summary>Example</summary>
 
 ```js
 cosplaying plugin list
+```
+
+</details>
+
+<a id="error-2900021c"></a>
+### shipped plugin %s is off. Run cosplaying plugin enable %s, or add "%s" to the plugins list.
+
+Thrown from: `hook`
+
+Catalog id: `cli.shipped-plugin-off`
+
+`cli(hook)`
+
+`git` and `gh` ship with the package and stay off until named.
+
+Step-by-step resolution:
+1. Run cosplaying plugin enable git or cosplaying plugin enable gh, or add the name to the plugins list.
+
+<details>
+<summary>Example</summary>
+
+```js
+cosplaying plugin enable git
+```
+
+</details>
+
+<a id="error-e7665342"></a>
+### cosplaying plugin enable: expected a shipped plugin name. Run cosplaying plugin enable git or cosplaying plugin enable gh.
+
+Thrown from: `plugin`
+
+Catalog id: `cli.plugin-enable-usage`
+
+`cli(plugin)`
+
+Enable names a shipped plugin. It does not install a third-party package.
+
+Step-by-step resolution:
+1. Run cosplaying plugin enable git or cosplaying plugin enable gh.
+
+<details>
+<summary>Example</summary>
+
+```js
+cosplaying plugin enable gh
+```
+
+</details>
+
+<a id="error-ecf47ff6"></a>
+### cosplaying plugin disable: expected a shipped plugin name. Run cosplaying plugin disable git or cosplaying plugin disable gh.
+
+Thrown from: `plugin`
+
+Catalog id: `cli.plugin-disable-usage`
+
+`cli(plugin)`
+
+Disable removes a shipped name from the user JSON settings file.
+
+Step-by-step resolution:
+1. Run cosplaying plugin disable git or cosplaying plugin disable gh.
+
+<details>
+<summary>Example</summary>
+
+```js
+cosplaying plugin disable git
+```
+
+</details>
+
+<a id="error-0da0c515"></a>
+### %s is not a shipped plugin. Shipped plugins are git and gh. Run cosplaying plugin enable git or cosplaying plugin enable gh.
+
+Thrown from: `plugin`
+
+Catalog id: `cli.plugin-not-shipped`
+
+`cli(plugin)`
+
+Enable and disable accept the shipped names only. Other plugins use install and uninstall.
+
+Step-by-step resolution:
+1. Run cosplaying plugin enable git or cosplaying plugin enable gh.
+
+<details>
+<summary>Example</summary>
+
+```js
+cosplaying plugin enable git
+```
+
+</details>
+
+<a id="error-f37e2df3"></a>
+### plugin %s is already installed at %s. Run cosplaying plugin uninstall %s first.
+
+Thrown from: `plugin`
+
+Catalog id: `cli.plugin-enable-installed`
+
+`cli(plugin)`
+
+An installed copy of the same command is the one hook runs. Enable does not replace it.
+
+Step-by-step resolution:
+1. Run cosplaying plugin uninstall git, or the installed name, then cosplaying plugin enable git.
+
+<details>
+<summary>Example</summary>
+
+```js
+cosplaying plugin uninstall git
+```
+
+</details>
+
+<a id="error-33f81cd8"></a>
+### settings directory %s has more than one config file: %s. Keep one of config.json, config.yaml, or config.yml and delete the others.
+
+Thrown from: `plugin`
+
+Catalog id: `cli.plugin-user-config-many`
+
+`cli(plugin)`
+
+Enable and disable write `config.json`. A second user settings file would leave two sources.
+
+Step-by-step resolution:
+1. Keep one of config.json, config.yaml, or config.yml and delete the others.
+
+<details>
+<summary>Example</summary>
+
+```js
+rm ~/.config/cosplaying/config.yaml
+```
+
+</details>
+
+<a id="error-bdd818e0"></a>
+### user settings file %s is YAML. Add "%s" to the plugins list in that file.
+
+Thrown from: `plugin`
+
+Catalog id: `cli.plugin-user-config-yaml`
+
+`cli(plugin)`
+
+Enable writes JSON. A YAML user file stays the file you edit.
+
+Step-by-step resolution:
+1. Add "git" or "gh" to the plugins list in that file.
+
+<details>
+<summary>Example</summary>
+
+```yaml
+plugins:
+  - git
+```
+
+</details>
+
+<a id="error-3f3cdf88"></a>
+### settings file %s is not a JSON object. Replace it with an object that contains a plugins array, or delete the file.
+
+Thrown from: `plugin`
+
+Catalog id: `cli.plugin-user-config-shape`
+
+`cli(plugin)`
+
+The user settings file has to be one object so `plugins` can be updated.
+
+Step-by-step resolution:
+1. Replace it with an object that contains a plugins array, or delete the file.
+
+<details>
+<summary>Example</summary>
+
+```json
+{ "plugins": ["git"] }
+```
+
+</details>
+
+<a id="error-c4803d83"></a>
+### plugin %s is enabled in %s. Remove "%s" from the plugins list in that file.
+
+Thrown from: `plugin`
+
+Catalog id: `cli.plugin-enabled-elsewhere`
+
+`cli(plugin)`
+
+Disable edits `~/.config/cosplaying/config.json`. A project file or a YAML user file is edited by hand.
+
+Step-by-step resolution:
+1. Remove "git" or "gh" from the plugins list in that file.
+
+<details>
+<summary>Example</summary>
+
+```json
+{ "plugins": [] }
+```
+
+</details>
+
+<a id="error-a857ddec"></a>
+### could not enable plugin %s: %s. Fix the user settings file and run cosplaying plugin enable again.
+
+Thrown from: `plugin`
+
+Catalog id: `cli.plugin-enable-failed`
+
+`cli(plugin)`
+
+The user settings file could not be updated.
+
+Step-by-step resolution:
+1. Fix the user settings file and run cosplaying plugin enable again.
+
+<details>
+<summary>Example</summary>
+
+```js
+cosplaying plugin enable git
+```
+
+</details>
+
+<a id="error-e5941c01"></a>
+### could not disable plugin %s: %s. Fix the user settings file and run cosplaying plugin disable again.
+
+Thrown from: `plugin`
+
+Catalog id: `cli.plugin-disable-failed`
+
+`cli(plugin)`
+
+The user settings file could not be updated.
+
+Step-by-step resolution:
+1. Fix the user settings file and run cosplaying plugin disable again.
+
+<details>
+<summary>Example</summary>
+
+```js
+cosplaying plugin disable git
 ```
 
 </details>
