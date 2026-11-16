@@ -40,6 +40,34 @@ function isolated() {
   };
 }
 
+/**
+ * @param {unknown} value
+ * @param {(command: string) => string} visitCommand
+ */
+function mapCommands(value, visitCommand) {
+  if (!value || typeof value !== 'object') return;
+  if (Array.isArray(value)) {
+    for (const entry of value) mapCommands(entry, visitCommand);
+    return;
+  }
+  if (typeof value.command === 'string') value.command = visitCommand(value.command);
+  for (const entry of Object.values(value)) mapCommands(entry, visitCommand);
+}
+
+/**
+ * @param {unknown} value
+ * @returns {string[]}
+ */
+function commandStrings(value) {
+  /** @type {string[]} */
+  const commands = [];
+  mapCommands(value, (command) => {
+    commands.push(command);
+    return command;
+  });
+  return commands;
+}
+
 test('doctor reports an unrecognized hook command without running it', () => {
   const { home, cwd } = isolated();
   const installed = run(['install', '-H', 'claude-code'], home, cwd);
@@ -84,14 +112,18 @@ test('doctor --repair rewrites the inspected project scope', () => {
   const projectFile = path.join(project, '.codex', 'hooks.json');
   const userBefore = readFileSync(userFile, 'utf8');
   const stale = path.join(home, 'missing-node', 'node');
-  const rewritten = readFileSync(projectFile, 'utf8').replaceAll(process.execPath, stale);
+  const projectParsed = JSON.parse(readFileSync(projectFile, 'utf8'));
+  mapCommands(projectParsed, (command) => command.replaceAll(process.execPath, stale));
+  const rewritten = `${JSON.stringify(projectParsed, null, 2)}\n`;
   assert.notEqual(rewritten, userBefore);
   assert.match(rewritten, /missing-node/);
   writeFileSync(projectFile, rewritten);
   const doctor = run(['doctor', '--repair', '--project-dir', project], home, project);
   const projectAfter = readFileSync(projectFile, 'utf8');
-  assert.equal(projectAfter.includes(stale), false, projectAfter);
-  assert.equal(projectAfter.includes(process.execPath), true, projectAfter);
+  const after = commandStrings(JSON.parse(projectAfter));
+  assert.equal(after.length > 0, true, projectAfter);
+  assert.equal(after.some((command) => command.includes(stale)), false, projectAfter);
+  assert.equal(after.every((command) => command.includes(process.execPath)), true, projectAfter);
   assert.equal(readFileSync(userFile, 'utf8'), userBefore);
   assert.equal(doctor.stdout.includes(`cosplaying doctor: repaired ${projectFile}`), true, doctor.stdout);
   const trust = 'Codex CLI: run /hooks, review cosplaying\'s updated hook definitions, then trust them again.';

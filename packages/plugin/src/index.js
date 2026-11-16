@@ -17,6 +17,7 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { LayerError } from '@mcp-layer/error';
 import { PluginManager } from 'live-plugin-manager';
+import { quoteShell } from 'cosplaying/hooks';
 
 const errorScope = 'cosplaying';
 const errorDocs = 'github.com/3rd-Eden/cosplay/tree/main/packages';
@@ -215,7 +216,7 @@ function installProductionDependencies(directory, sourceDirectory) {
   if (Object.keys(productionDependencies(manifest)).length === 0) return;
   if (sourceDirectory) rewriteRelativeFileDependencies(directory, sourceDirectory);
   const npm = npmExecutable();
-  const result = spawnSync(npm, ['install', '--ignore-scripts', '--omit=dev'], {
+  const result = defaultSpawn(npm, ['install', '--ignore-scripts', '--omit=dev'], {
     cwd: directory,
     encoding: 'utf8',
     env: {
@@ -902,6 +903,25 @@ function reportLaunchError(command, error, options, always) {
 }
 
 /**
+ * Node refuses a direct spawn of a .bat or .cmd file with EINVAL.
+ * cmd.exe runs those files. Each token uses the same Windows quoting as hook commands.
+ * @param {string} command
+ * @param {string[]} args
+ * @returns {{command: string, args: string[], windowsVerbatimArguments?: boolean}}
+ */
+function spawnCommand(command, args) {
+  if (process.platform !== 'win32' || !/\.(?:bat|cmd)$/i.test(command)) return { command, args };
+  const inner = [command, ...args].map((part) => quoteShell(String(part), 'win32')).join(' ');
+  const root = process.env.SystemRoot || process.env.windir;
+  const cmd = process.env.ComSpec || (root ? path.join(root, 'System32', 'cmd.exe') : 'cmd.exe');
+  return {
+    command: cmd,
+    args: ['/d', '/s', '/c', `"${inner}"`],
+    windowsVerbatimArguments: true,
+  };
+}
+
+/**
  * @param {object} options
  * @returns {object}
  */
@@ -919,8 +939,10 @@ function spawnSyncOptions(options) {
  * @param {import('node:child_process').SpawnOptions & {encoding?: BufferEncoding, input?: string, stderr?: {write?: (chunk: string) => unknown}}} [options]
  */
 export function defaultSpawn(command, args, options = {}) {
+  const target = spawnCommand(command, args || []);
+  const verbatim = target.windowsVerbatimArguments ? { windowsVerbatimArguments: true } : {};
   if (options.encoding || options.input !== undefined || (Array.isArray(options.stdio) && options.stdio.includes('pipe'))) {
-    const result = spawnSync(command, args, spawnSyncOptions(options));
+    const result = spawnSync(target.command, target.args, { ...spawnSyncOptions(options), ...verbatim });
     if (result.error) {
       reportLaunchError(command, result.error, options, true);
       if (!launchErrorStream(options) && typeof result.stderr === 'string') {
@@ -937,12 +959,20 @@ export function defaultSpawn(command, args, options = {}) {
       settled = true;
       resolve(result);
     };
-    const child = spawn(command, args, {
-      cwd: options.cwd,
-      env: options.env,
-      shell: false,
-      stdio: options.stdio || 'inherit',
-    });
+    let child;
+    try {
+      child = spawn(target.command, target.args, {
+        cwd: options.cwd,
+        env: options.env,
+        shell: false,
+        stdio: options.stdio || 'inherit',
+        ...verbatim,
+      });
+    } catch (error) {
+      reportLaunchError(command, error, options, true);
+      finish({ status: 127, error });
+      return;
+    }
     child.on('error', (error) => {
       reportLaunchError(command, error, options, true);
       finish({ status: 127, error });

@@ -36,6 +36,27 @@ function isolated() {
   };
 }
 
+/**
+ * Hook commands as the harness reads them. JSON escapes backslashes in the file bytes.
+ * @param {string} text
+ * @returns {string[]}
+ */
+function hookCommands(text) {
+  /** @type {string[]} */
+  const commands = [];
+  const visit = (value) => {
+    if (!value || typeof value !== 'object') return;
+    if (Array.isArray(value)) {
+      for (const entry of value) visit(entry);
+      return;
+    }
+    if (typeof value.command === 'string') commands.push(value.command);
+    for (const entry of Object.values(value)) visit(entry);
+  };
+  visit(JSON.parse(text));
+  return commands;
+}
+
 test('repeated and comma-separated harness flags combine', () => {
   const { home, cwd } = isolated();
   const result = run(['install', '-H', 'codex,claude-code', '-a', 'cursor', '--harness', 'pi'], home, cwd);
@@ -63,7 +84,9 @@ test('--bin is the executable written into the hook file', () => {
   const result = run(['install', '-H', 'codex', '--bin', fake], home, cwd);
   assert.equal(result.status, 0, result.stderr);
   const text = readFileSync(path.join(home, '.codex', 'hooks.json'), 'utf8');
-  assert.match(text, new RegExp(fake.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+  const commands = hookCommands(text);
+  assert.equal(commands.length > 0, true, text);
+  for (const command of commands) assert.equal(command.includes(fake), true, command);
   assert.match(text, /agent-hook codex /);
   assert.doesNotMatch(text, /main\.js/);
 });
