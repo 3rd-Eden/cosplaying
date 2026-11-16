@@ -1,0 +1,48 @@
+{
+  "name": "cosplaying",
+  "version": "0.1.0",
+  "description": "Add a visible AI attribution byline to CLI writes routed through coding-agent hooks.",
+  "license": "MIT",
+  "type": "module",
+  "bin": {
+    "cosplaying": "./packages/cli/bin/cosplaying.js"
+  },
+  "exports": {
+    ".": "./packages/cli/src/index.js",
+    "./cli": "./packages/cli/src/index.js",
+    "./cli/paths": "./packages/cli/src/paths.js",
+    "./cli/state": "./packages/cli/src/state.js",
+    "./hooks": "./packages/hooks/src/index.js",
+    "./attribution": "./packages/attribution/src/index.js",
+    "./config": "./packages/cli/src/config.js",
+    "./plugin": "./packages/plugin/src/index.js",
+    "./adapters": "./packages/adapters/src/index.js",
+    "./errors": "./packages/errors/src/index.js"
+  },
+  "files": [
+    "packages",
+    "docs",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "prepare": "node scripts/link-notify.js",
+    "test": "node scripts/link-notify.js && node --test packages/*/test/*.test.js"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "@mcp-layer/error": "0.2.1",
+    "collapse-white-space": "^2.1.0",
+    "commander": "^15.1.0",
+    "cosmiconfig": "^9.0.2",
+    "find-up": "^8.0.0",
+    "live-plugin-manager": "^1.1.0",
+    "replaces": "^1.0.2",
+    "unbash": "^4.0.11",
+    "which": "^6.0.1",
+    "write-file-atomic": "^6.0.0",
+    "zod": "4.6.7"
+  }
+}

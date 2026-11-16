@@ -1,0 +1,34 @@
+# @cosplaying/plugin
+
+Private workspace package. Import it as `cosplaying/plugin`.
+
+## What it does
+
+Installs and loads Node packages with `live-plugin-manager`, and resolves the real binary a hook should spawn.
+
+## Scope
+
+In scope: reserved command names, `intercept === false`, the plugin data directory, and a mode `0600` temp copy of a UTF-8 source file.
+
+`installPlugin` copies a local package with `installFromPath`, or installs `owner/repo` and `github.com` URLs with `installFromGithub`. The package needs `name`, `version`, and `main`. A scoped package is linked at `plugins/@scope/<name>`. The command is the package name without that scope. A second install is refused when that command already has a `package.json` under the data directory. `require` cannot load ESM, so installed packages are loaded with `import()` of `main`. `list()` only remembers the current process, so a later process reads those package directories, including `@scope/<name>`. `installFromPath` installs npm registry and GitHub dependencies. It does not install a `file:` dependency. When the installed directory has `package.json` dependencies and no `node_modules`, install runs `npm install --ignore-scripts --omit=dev` there. A package with no production dependencies is not passed to npm.
+
+There is no bundled service adapter, and this package does not render markdown or trailer wording.
+
+## Public API
+
+- `RESERVED_COMMANDS` is `hook`, `agent-hook`, `rewrite`, `install`, `uninstall`, `doctor`, and `plugin`.
+- A plugin package `name`, without a scope, is the command. The default export is the function `hook` calls. `description`, `examples`, and `intercept` are optional named exports, or fields on a default object that has `run`. A name in `RESERVED_COMMANDS` is refused. `@cosplaying/cli` skips interception when `intercept` is `false`.
+- `block(stderr, reason)` writes `cosplaying: BLOCKED (command not run)`, the reason, and the line that tells the caller to stop. It does not exit and does not return a status code.
+- `withAttributedCopy(sourcePath, render, work)` reads `sourcePath` as bytes and rejects invalid UTF-8 before `render`. It calls `render(text)`, writes `os.tmpdir()/cosplaying-<pid>-<8 hex chars>` plus `path.extname(sourcePath)` at mode `0600`, awaits `work(copyPath)`, and deletes the copy. A source with no extension stays extensionless. `render` runs before the copy exists. The return value is the return value of `work`.
+- `pluginDataDirectory({ env, home })` is `$XDG_DATA_HOME/cosplaying/plugins` when `XDG_DATA_HOME` is absolute, otherwise `~/.local/share/cosplaying/plugins`.
+- `loadInstalledPlugins(options)` returns `{ name, command, kind, directory, entry, descriptor }` for each installed package, sorted by `command`. `kind` is `path`. `name` and `command` are the package name without a scope. Scope directories `plugins/@scope/<name>` are included.
+- `loadConfiguredPlugins(entries, options)` returns every installed plugin, then each config entry that is not already in that list. An absolute path, a path starting with `.`, or a value containing `/` or `\` is a directory. Any other entry is an installed plugin name. A config name that is already installed stays once. A path whose `command` is already loaded throws, as does any other duplicate `command`.
+- `resolveRealBin(command, { env, cliPaths })` returns `{ bin }` or `{ error }`. `COSPLAYING_<COMMAND>_BIN` wins when it is an absolute path to a regular file; the returned `bin` is that path. Any other override is an error, and `PATH` is not searched. Otherwise `which` walks `PATH` and returns the real path of the first file that is not in `cliPaths`. When the override or every `PATH` match is one of those paths, the error is the recursion error. When nothing matches, the error says the executable is missing.
+- `installPlugin(source, options)` returns `{ ok: true, name, directory }` or `{ ok: false, error }`.
+- `uninstallPlugin(name, options)` removes that package from the data directory. It returns `{ ok: true }` or `{ ok: false, error }`.
+- `listPlugins(options)` returns `{ name, command, kind, directory }` for each installed plugin.
+- `defaultSpawn(command, args, options)` does not use a shell. A call with `encoding`, `input`, or a `stdio` array that includes `'pipe'` returns the `spawnSync` result. Otherwise it returns a promise of `{ status }`. When the program cannot be started, the result is `{ status: 127, error }` and stderr receives the line that the command was not run, including `COSPLAYING_<COMMAND>_BIN`.
+
+## Related packages
+
+`@cosplaying/cli` calls these functions for `hook`, `plugin`, and `doctor`. A plugin function receives attribution helpers from `@cosplaying/attribution` and the settings `cosmiconfig` loaded over the defaults. Import and install failures throw or return `@cosplaying/errors`. `resolveRealBin` returns `{ error }`. `installPlugin` and `uninstallPlugin` return `{ ok: false, error }` for the failures they catch. The fixture plugin used by tests is `examples/notify`, which is not a workspace package.
