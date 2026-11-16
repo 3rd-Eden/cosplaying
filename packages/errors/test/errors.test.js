@@ -17,7 +17,12 @@ function run(args) {
   const cwd = mkdtempSync(path.join(tmpdir(), 'cosplaying-cwd-'));
   return spawnSync(process.execPath, [bin, ...args], {
     cwd,
-    env: { HOME: home },
+    env: {
+      HOME: home,
+      USERPROFILE: home,
+      ...(process.env.SystemRoot ? { SystemRoot: process.env.SystemRoot } : {}),
+      ...(process.env.windir ? { windir: process.env.windir } : {}),
+    },
     encoding: 'utf8',
   });
 }

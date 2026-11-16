@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
+import { systemEnv, writeSpawnStub } from './spawn-stub.js';
 
 const bin = fileURLToPath(new URL('../bin/cosplaying.js', import.meta.url));
 const notify = fileURLToPath(new URL('../../../examples/notify', import.meta.url));
@@ -20,6 +21,7 @@ function run(args, home, cwd, stub) {
     cwd,
     encoding: 'utf8',
     env: {
+      ...systemEnv(),
       HOME: home,
       USERPROFILE: home,
       PATH: '/usr/bin:/bin',
@@ -36,9 +38,11 @@ function isolated() {
   const home = mkdtempSync(path.join(tmpdir(), 'cosplaying-hook-home-'));
   const cwd = mkdtempSync(path.join(tmpdir(), 'cosplaying-hook-cwd-'));
   const marker = path.join(home, 'spawned');
-  const stub = path.join(home, 'notify');
-  writeFileSync(stub, `#!/bin/sh\ntouch ${JSON.stringify(marker)}\nprintf '%s\\n' "$@"\n`);
-  chmodSync(stub, 0o755);
+  const stub = writeSpawnStub(
+    path.join(home, 'notify'),
+    `#!/bin/sh\ntouch ${JSON.stringify(marker)}\nprintf '%s\\n' "$@"\n`,
+    { marker },
+  );
   writeFileSync(path.join(cwd, '.cosplaying.json'), JSON.stringify({ plugins: [notify] }));
   return { home, cwd, stub, marker };
 }

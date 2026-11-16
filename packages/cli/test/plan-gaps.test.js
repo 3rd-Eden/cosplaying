@@ -2,7 +2,6 @@ import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import {
-  chmodSync,
   existsSync,
   mkdtempSync,
   mkdirSync,
@@ -15,6 +14,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
+import { systemEnv, writeSpawnStub } from './spawn-stub.js';
 
 const bin = fileURLToPath(new URL('../bin/cosplaying.js', import.meta.url));
 const notify = fileURLToPath(new URL('../../../examples/notify', import.meta.url));
@@ -32,6 +32,7 @@ function run(args, home, cwd, env = {}, input) {
     input,
     encoding: 'utf8',
     env: {
+      ...systemEnv(),
       HOME: home,
       USERPROFILE: home,
       PATH: '/usr/bin:/bin',
@@ -48,9 +49,11 @@ function isolated(plugins = [notify]) {
   const home = mkdtempSync(path.join(tmpdir(), 'cosplaying-gap-home-'));
   const cwd = mkdtempSync(path.join(tmpdir(), 'cosplaying-gap-cwd-'));
   const marker = path.join(home, 'spawned');
-  const stub = path.join(home, 'notify');
-  writeFileSync(stub, `#!/bin/sh\ntouch ${JSON.stringify(marker)}\nprintf '%s\\n' "$@"\n`);
-  chmodSync(stub, 0o755);
+  const stub = writeSpawnStub(
+    path.join(home, 'notify'),
+    `#!/bin/sh\ntouch ${JSON.stringify(marker)}\nprintf '%s\\n' "$@"\n`,
+    { marker },
+  );
   if (plugins) writeFileSync(path.join(cwd, '.cosplaying.json'), JSON.stringify({ plugins }));
   return { home, cwd, marker, stub };
 }
@@ -345,12 +348,14 @@ test('install quotes the hook, keeps an existing version, and does not write a b
     const installed = run(['install', '--harness', 'claude-code,codex,gemini,cursor'], home, cwd);
     assert.equal(installed.status, 0, installed.stderr);
     const claudeFile = path.join(home, '.claude', 'settings.json');
-    assert.equal(statSync(claudeFile).mode & 0o777, 0o600);
+    if (process.platform !== 'win32') assert.equal(statSync(claudeFile).mode & 0o777, 0o600);
     const claude = JSON.parse(readFileSync(claudeFile, 'utf8'));
     const pre = claude.hooks.PreToolUse[0];
     assert.equal(pre.matcher, 'Bash|PowerShell');
     const command = pre.hooks[0].command;
-    assert.match(command, new RegExp(`^'${process.execPath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}' '`));
+    const quote = process.platform === 'win32' ? '"' : "'";
+    const escaped = process.execPath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    assert.match(command, new RegExp(`^${quote}${escaped}${quote} ${quote}`));
     assert.match(command, /agent-hook claude-code PreToolUse # cosplaying:claude-code$/);
 
     const codex = JSON.parse(readFileSync(path.join(home, '.codex', 'hooks.json'), 'utf8'));
@@ -441,13 +446,12 @@ export default async function run(args, context) {
   return result?.status ?? 1;
 }
 `);
-  writeFileSync(quietStub, '#!/bin/sh\nprintf "quiet:%s\\n" "$@"\n');
-  chmodSync(quietStub, 0o755);
+  const quietProgram = writeSpawnStub(quietStub, '#!/bin/sh\nprintf "quiet:%s\\n" "$@"\n', { prefix: 'quiet:' });
   writeFileSync(path.join(cwd, '.cosplaying.json'), JSON.stringify({ plugins: [notify, quietDir] }));
   try {
     const rewritten = run(['rewrite', 'quiet --list; notify --list'], home, cwd, {
       ...envFor(context),
-      COSPLAYING_QUIET_BIN: quietStub,
+      COSPLAYING_QUIET_BIN: quietProgram,
     });
     assert.equal(rewritten.status, 0, rewritten.stderr);
     assert.match(rewritten.stdout, /^quiet --list; /);
@@ -456,7 +460,7 @@ export default async function run(args, context) {
 
     const ran = run(['hook', '--', 'quiet', '--list'], home, cwd, {
       ...envFor(context),
-      COSPLAYING_QUIET_BIN: quietStub,
+      COSPLAYING_QUIET_BIN: quietProgram,
     });
     assert.equal(ran.status, 0, ran.stderr);
     assert.equal(ran.stdout, 'quiet:--list\n');
@@ -516,12 +520,14 @@ test('session start stores a hashed model file and the env trailer wins', () => 
     assert.equal(started.status, 0, started.stderr);
     const root = path.join(home, '.config', 'cosplaying');
     const sessions = path.join(root, 'sessions');
-    assert.equal(statSync(root).mode & 0o777, 0o700);
-    assert.equal(statSync(sessions).mode & 0o777, 0o700);
+    if (process.platform !== 'win32') {
+      assert.equal(statSync(root).mode & 0o777, 0o700);
+      assert.equal(statSync(sessions).mode & 0o777, 0o700);
+    }
     const hash = createHash('sha256').update(sessionId).digest('hex');
     const file = path.join(sessions, `${hash}.json`);
     assert.equal(readFileSync(file, 'utf8'), '{"model":"Example Model"}');
-    assert.equal(statSync(file).mode & 0o777, 0o600);
+    if (process.platform !== 'win32') assert.equal(statSync(file).mode & 0o777, 0o600);
     assert.equal(path.basename(file), `${hash}.json`);
 
     const cleared = run(['agent-hook', 'claude-code', 'SessionStart'], home, cwd, env, JSON.stringify({ session_id: sessionId }));
@@ -581,6 +587,7 @@ process.stdout.write(JSON.stringify({
       cwd,
       encoding: 'utf8',
       env: {
+        ...systemEnv(),
         HOME: home,
         USERPROFILE: home,
         PATH: '/usr/bin:/bin',

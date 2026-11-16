@@ -71,7 +71,7 @@ test('Claude PostModelSwitch stores to_model or model and SessionEnd deletes tha
   const preferredFile = sessionFile(context.home, preferred);
   assert.equal(preferredFile.includes(preferred), false);
   assert.equal(readFileSync(preferredFile, 'utf8'), '{"model":"To Model"}');
-  assert.equal(statSync(preferredFile).mode & 0o777, 0o600);
+  if (process.platform !== 'win32') assert.equal(statSync(preferredFile).mode & 0o777, 0o600);
 
   const fallback = 'session/fallback-model';
   const onlyModel = run(['agent-hook', 'claude-code', 'PostModelSwitch'], {
@@ -210,7 +210,9 @@ function capture(child) {
   };
 }
 
-test('agent-hook retries EAGAIN on an empty nonblocking pipe', async () => {
+test('agent-hook retries EAGAIN on an empty nonblocking pipe', {
+  skip: process.platform !== 'win32' && existsSync(python) ? false : 'python3 and mkfifo are required to make stdin nonblocking',
+}, async () => {
   assert.equal(existsSync(python), true);
   const context = isolated();
   const fifo = path.join(mkdtempSync(path.join(tmpdir(), 'cosplaying-fifo-')), 'pipe');

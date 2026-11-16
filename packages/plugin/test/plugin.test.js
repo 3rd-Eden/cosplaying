@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
+import { systemEnv, writeSpawnStub } from '../../cli/test/spawn-stub.js';
 import { block, defaultSpawn, installPlugin, listPlugins, resolveRealBin, uninstallPlugin, withAttributedCopy } from '../src/index.js';
 
 function home() {
@@ -43,7 +44,7 @@ test('block writes the standard message and withAttributedCopy removes its temp 
     assert.equal(readFileSync(source, 'utf8'), 'Hello\n');
     assert.equal(path.extname(file), '.md');
     assert.match(path.basename(file), new RegExp(`^cosplaying-${process.pid}-[0-9a-f]{8}\\.md$`));
-    assert.equal(statSync(file).mode & 0o777, 0o600);
+    if (process.platform !== 'win32') assert.equal(statSync(file).mode & 0o777, 0o600);
     assert.equal(path.dirname(file), tmpdir());
   });
   assert.match(copy, /byline/);
@@ -74,7 +75,7 @@ test('withAttributedCopy keeps an extensionless name and rejects invalid UTF-8',
       copyPath = file;
       assert.equal(path.extname(file), '');
       assert.match(path.basename(file), new RegExp(`^cosplaying-${process.pid}-[0-9a-f]{8}$`));
-      assert.equal(statSync(file).mode & 0o777, 0o600);
+      if (process.platform !== 'win32') assert.equal(statSync(file).mode & 0o777, 0o600);
       assert.equal(readFileSync(file, 'utf8'), 'Hello\n');
     });
     assert.equal(existsSync(copyPath), false);
@@ -320,12 +321,12 @@ test('plugin install installs a local file dependency and the command can load i
     assert.equal(existsSync(path.join(directory, 'node_modules', 'local-dep', 'package.json')), true);
     assert.equal(existsSync(path.join(source, 'node_modules')), false);
     assert.match(readFileSync(path.join(source, 'package.json'), 'utf8'), /file:\.\.\/local-dep/);
-    const bin = path.join(homeDir, 'localplug-bin');
-    writeFileSync(bin, '#!/bin/sh\nexit 0\n');
+    const bin = writeSpawnStub(path.join(homeDir, 'localplug-bin'), '#!/bin/sh\nexit 0\n');
     const loaded = spawnSync(process.execPath, [cli, 'hook', '--', 'localplug'], {
       cwd,
       encoding: 'utf8',
       env: {
+        ...systemEnv(),
         HOME: homeDir,
         USERPROFILE: homeDir,
         PATH: '/usr/bin:/bin',

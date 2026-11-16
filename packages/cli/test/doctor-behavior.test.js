@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { systemEnv, writeSpawnStub } from './spawn-stub.js';
 
 const bin = fileURLToPath(new URL('../bin/cosplaying.js', import.meta.url));
 
@@ -19,6 +20,7 @@ function run(args, home, cwd, env = {}) {
     cwd,
     encoding: 'utf8',
     env: {
+      ...systemEnv(),
       HOME: home,
       USERPROFILE: home,
       PATH: '/usr/bin:/bin',
@@ -116,9 +118,8 @@ test('PATH cosplaying with a different version is a finding', () => {
   const binDir = path.join(home, 'bin');
   mkdirSync(binDir);
   const log = path.join(home, 'path-log');
-  const script = path.join(binDir, 'cosplaying');
-  writeFileSync(script, `#!/bin/sh\nprintf '%s\\n' "$*" >> ${JSON.stringify(log)}\nif [ "$1" = "--version" ]; then\n  printf '%s\\n' '9.9.9'\n  exit 0\nfi\nexit 0\n`);
-  chmodSync(script, 0o755);
+  const shell = `#!/bin/sh\nprintf '%s\\n' "$*" >> ${JSON.stringify(log)}\nif [ "$1" = "--version" ]; then\n  printf '%s\\n' '9.9.9'\n  exit 0\nfi\nexit 0\n`;
+  writeSpawnStub(path.join(binDir, 'cosplaying'), shell, { log, version: '9.9.9' });
   const doctor = run(['doctor'], home, cwd, { PATH: binDir });
   assert.match(doctor.stderr, /PATH: version 9\.9\.9 differs from 0\.1\.0/);
   const recorded = readFileSync(log, 'utf8');
@@ -149,7 +150,9 @@ test('--project-dir must be a directory', () => {
   assert.doesNotMatch(again.stderr, /missing owned hook/);
 });
 
-test('doctor probes a hook whose executable is this cosplaying bin', () => {
+test('doctor probes a hook whose executable is this cosplaying bin', {
+  skip: process.platform === 'win32' ? 'Windows will not execute the shebang cosplaying.js bin' : false,
+}, () => {
   const { home, cwd } = isolated();
   const nodeDir = path.join(home, 'node-bin');
   mkdirSync(nodeDir);

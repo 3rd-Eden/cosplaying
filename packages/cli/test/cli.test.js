@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdtempSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
+import { systemEnv, writeSpawnStub } from './spawn-stub.js';
 import { main } from '../src/main.js';
 import { EMPTY_SESSION, renderSession } from '../src/prompt.js';
 
@@ -23,15 +24,17 @@ function isolated() {
   const home = mkdtempSync(path.join(tmpdir(), 'cosplaying-cli-'));
   const cwd = mkdtempSync(path.join(tmpdir(), 'cosplaying-cwd-'));
   mkdirSync(path.join(cwd, '.git'));
-  const bin = path.join(home, 'notify');
-  writeFileSync(bin, '#!/bin/sh\nprintf "inside:%s\\n" "$COSPLAYING_INSIDE_HOOK"\nprintf "%s\\n" "$@"\n');
-  chmodSync(bin, 0o755);
+  const stub = writeSpawnStub(
+    path.join(home, 'notify'),
+    '#!/bin/sh\nprintf "inside:%s\\n" "$COSPLAYING_INSIDE_HOOK"\nprintf "%s\\n" "$@"\n',
+    { inside: '1' },
+  );
   writeFileSync(path.join(cwd, '.cosplaying.json'), JSON.stringify({ plugins: [notify] }));
   return {
     home,
     cwd,
     platform: 'linux',
-    env: { PATH: '/usr/bin:/bin', HOME: home, COSPLAYING_NOTIFY_BIN: bin },
+    env: { ...systemEnv(), PATH: '/usr/bin:/bin', HOME: home, USERPROFILE: home, COSPLAYING_NOTIFY_BIN: stub },
   };
 }
 
@@ -68,6 +71,7 @@ function runCli(args, context) {
     cwd: context.cwd,
     encoding: 'utf8',
     env: {
+      ...systemEnv(),
       HOME: context.home,
       USERPROFILE: context.home,
       PATH: context.env.PATH,
