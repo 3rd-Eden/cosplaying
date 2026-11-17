@@ -76,6 +76,16 @@ export async function enableBundledPlugin(name, context) {
         args: [name, conflict.directory, name],
       });
     }
+    const project = findProjectConfig(context);
+    const projectPlugins = project?.config?.plugins;
+    if (Array.isArray(projectPlugins) && !projectPlugins.includes(name)) {
+      throw new CosplayError({
+        name: 'cli',
+        method: 'plugin',
+        message: 'project settings in %s keep plugin %s disabled. Add "%s" to the plugins list in that file, then run cosplaying plugin enable %s again.',
+        args: [project.filepath, name, name, name],
+      });
+    }
     const { file, data } = userSettings(context);
     const plugins = pluginList(data);
     if (!plugins.includes(name)) {

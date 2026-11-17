@@ -105,19 +105,18 @@ test('a config model and a second project file block the command', () => {
   assert.equal(duplicate.stdout, '');
 });
 
-test('a config field of the wrong type fails the command', () => {
+test('an optional config field of the wrong type does not stop the command', () => {
   const home = temp();
   const cwd = temp();
-  writeFileSync(path.join(cwd, '.cosplaying.json'), JSON.stringify({ plugins: 'notify' }));
+  writeFileSync(path.join(cwd, '.cosplaying.json'), JSON.stringify({ variables: 'notify' }));
   const result = spawnSync(process.execPath, [bin, 'rewrite', 'echo hi'], {
     cwd,
     env: { HOME: home },
     encoding: 'utf8',
   });
-  assert.equal(result.status, 1);
-  assert.match(result.stderr, /does not match the config schema/);
-  assert.match(result.stderr, /plugins: Invalid input: expected array, received string/);
-  assert.match(result.stderr, /For more information visit: https:\/\/github\.com\/3rd-Eden\/cosplay\/tree\/main\/packages\/cli\/README\.md#error-[0-9a-f]{6}/);
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stdout, 'echo hi\n');
+  assert.equal(result.stderr, '');
 });
 
 test('invalid JSON and invalid YAML config files fail and name the file', () => {

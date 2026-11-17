@@ -85,6 +85,21 @@ test('plugin enable writes the user config and disable removes the name', () => 
   assert.equal(after.stdout, '');
 });
 
+test('plugin enable reports when a project plugins list keeps it disabled', () => {
+  const { home, cwd } = isolated();
+  const project = path.join(cwd, '.cosplaying.json');
+  writeFileSync(project, `${JSON.stringify({ plugins: [] })}\n`);
+
+  const result = run(['plugin', 'enable', 'git'], home, cwd);
+
+  assert.equal(result.status, 1);
+  assert.equal(result.stdout, '');
+  assert.match(result.stderr, /project settings/);
+  assert.equal(result.stderr.includes(project), true);
+  assert.match(result.stderr, /Add "git" to the plugins list/);
+  assert.equal(existsSync(path.join(home, '.config', 'cosplaying', '.cosplaying.json')), false);
+});
+
 test('enable edits a yaml settings file, rejects a second file, and rejects an installed copy', () => {
   const yamlHome = isolated();
   const directory = path.join(yamlHome.home, '.config', 'cosplaying');

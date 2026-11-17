@@ -3,7 +3,6 @@ import { CosplayError } from 'cosplaying/errors';
 import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import path from 'node:path';
-import { configSchema, fileSchema, schemaIssues } from './config-schema.js';
 
 /** @type {string} */
 export const DEFAULT_LINK = 'https://www.npmjs.com/package/cosplaying';
@@ -45,6 +44,25 @@ function merge(base, overlay) {
     ...overlay,
     variables: { ...base.variables, ...overlay.variables },
   };
+}
+
+/**
+ * Map the public settings names to the flat values used by the CLI.
+ * @param {unknown} config
+ * @returns {Record<string, unknown>}
+ */
+function normalize(config) {
+  const file = config ?? {};
+  const attribution = file.attribution ?? {};
+  const templates = attribution.templates ?? {};
+  return Object.fromEntries(Object.entries({
+    link: attribution.link ?? file.link,
+    markdown: templates.markdown ?? attribution.template,
+    trailer: templates.trailer,
+    session: templates.session,
+    plugins: file.plugins,
+    variables: file.variables,
+  }).filter(([, value]) => value !== undefined));
 }
 
 /**
@@ -112,16 +130,7 @@ function read(explorer, directory, names) {
   if (!found) return {};
   if (names) assertSingleConfig(path.dirname(found.filepath), names);
   rejectConfigModel(found.filepath, found.config);
-  const parsed = fileSchema.safeParse(found.config);
-  if (!parsed.success) {
-    throw new CosplayError({
-      name: 'cli',
-      method: 'loadConfig',
-      message: 'settings file %s does not match the config schema: %s. Edit that file so link, plugins, variables, and attribution.templates match the documented shape, or delete the file to use the defaults.',
-      args: [found.filepath, schemaIssues(parsed.error)],
-    });
-  }
-  return parsed.data;
+  return normalize(found.config);
 }
 
 /**
@@ -163,5 +172,5 @@ export function loadConfig({ cwd = process.cwd(), home = homedir() } = {}) {
     read(userConfig, userConfigDirectory({ home })),
     read(projectConfig, cwd, CONFIG_NAMES),
   ].reduce(merge);
-  return configSchema.parse(merged);
+  return merged;
 }

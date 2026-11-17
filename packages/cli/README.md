@@ -30,4 +30,4 @@ Exported from `src/index.js`:
 
 ## Related packages
 
-`@cosplaying/adapters` owns each harness. `@cosplaying/hooks` edits the hook files. `cosmiconfig` loads settings and `zod` checks their shape. `@cosplaying/plugin` loads plugins and resolves the real binary. `@cosplaying/attribution` renders the bylines passed into a plugin. Failures throw `CosplayError` from `@cosplaying/errors`.
+`@cosplaying/adapters` owns each harness. `@cosplaying/hooks` edits the hook files. `cosmiconfig` loads settings. `@cosplaying/plugin` loads plugins and resolves the real binary. `@cosplaying/attribution` renders the bylines passed into a plugin. Failures throw `CosplayError` from `@cosplaying/errors`.
