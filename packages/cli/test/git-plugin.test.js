@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { chmodSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -278,6 +278,34 @@ test('push to a new remote checks commits known only to another remote', () => {
   assert.match(pushed.stderr, new RegExp(sha.slice(0, 12)));
   const remoteRef = git(['--git-dir', destination, 'for-each-ref', '--format=%(refname)', 'refs/heads/new'], fixture.env, fixture.repo);
   assert.equal(remoteRef, '');
+});
+
+test('push ignores advertised remote commits that are not in the local object database', () => {
+  const fixture = repository();
+  const remote = path.join(fixture.home, 'origin.git');
+  git(['init', '--quiet', '--bare', '--initial-branch=main', remote], fixture.env, fixture.repo);
+  git(['remote', 'add', 'origin', remote], fixture.env, fixture.repo);
+  const base = run(['hook', '--model', 'Base', '--', 'git', 'commit', '--quiet', '--allow-empty', '-m', 'base'], fixture);
+  assert.equal(base.status, 0, base.stderr);
+  git(['push', '--quiet', '--set-upstream', 'origin', 'main'], fixture.env, fixture.repo);
+
+  const foreign = path.join(fixture.home, 'foreign');
+  mkdirSync(foreign);
+  git(['init', '--quiet', '--initial-branch=main'], fixture.env, foreign);
+  git(['config', 'user.name', 'Cosplaying Test'], fixture.env, foreign);
+  git(['config', 'user.email', 'test@example.com'], fixture.env, foreign);
+  writeFileSync(path.join(foreign, 'foreign.txt'), 'foreign\n');
+  git(['add', 'foreign.txt'], fixture.env, foreign);
+  git(['commit', '--quiet', '-m', 'foreign'], fixture.env, foreign);
+  git(['push', '--quiet', remote, 'HEAD:refs/pull/1/merge'], fixture.env, foreign);
+
+  const local = run(['hook', '--model', 'Local', '--', 'git', 'commit', '--quiet', '--allow-empty', '-m', 'local'], fixture);
+  assert.equal(local.status, 0, local.stderr);
+  const localSha = git(['rev-parse', 'HEAD'], fixture.env, fixture.repo).trim();
+  const pushed = run(['hook', '--model', 'Pusher', '--', 'git', 'push', '--quiet'], fixture);
+
+  assert.equal(pushed.status, 0, pushed.stderr);
+  assert.equal(git(['--git-dir', remote, 'rev-parse', 'refs/heads/main'], fixture.env, fixture.repo).trim(), localSha);
 });
 
 test('push checks configured push urls instead of the fetch url', () => {

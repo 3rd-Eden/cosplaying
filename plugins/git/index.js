@@ -388,7 +388,8 @@ function outgoingCommits(bin, args, info, options) {
       const output = captureGit(bin, [...prefix, 'ls-remote', '--refs', target], options);
       if (output === null) return null;
       const tips = String(output).trim().split(/\r?\n/).filter(Boolean).map((line) => line.split(/\s+/, 1)[0]);
-      const outgoing = branchCommits(tips.length ? [source, '--not', ...tips] : [source]);
+      const knownTips = tips.filter((sha) => captureGit(bin, [...prefix, 'cat-file', '-e', `${sha}^{commit}`], options) !== null);
+      const outgoing = branchCommits(knownTips.length ? [source, '--not', ...knownTips] : [source]);
       if (!outgoing) return null;
       for (const commit of outgoing) commits.set(commit.sha, commit);
     }
