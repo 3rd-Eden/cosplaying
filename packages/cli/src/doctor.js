@@ -11,8 +11,21 @@ import { gitRoot, installHarness, repairHookOrder } from './harness.js';
 import { cosplayingBinPath, packageVersion, realMainPath } from './paths.js';
 
 /**
- * @param {object} options
- * @returns {Promise<number>}
+ * Checks hook files, plugin executables, and the `cosplaying` binary on `PATH`.
+ *
+ * User hooks are required. Project hooks are required when `--project-dir` was passed, and optional when doctor finds a Git root on its own. A missing agent executable is reported as information, not as a failure. `--repair` rewrites extension files and a Node path that no longer exists. A Node-path repair runs doctor once more without repair so the new file is checked.
+ *
+ * @param {object} options Runtime context and doctor flags.
+ * @param {NodeJS.WritableStream} options.stdout Stream for repair notes and informational lines.
+ * @param {NodeJS.WritableStream} options.stderr Stream for findings.
+ * @param {NodeJS.ProcessEnv} options.env Environment used to resolve executables.
+ * @param {NodeJS.Platform} [options.platform] Platform used to resolve executables.
+ * @param {string} [options.cwd] Directory used to find a Git root.
+ * @param {string} [options.home] Home directory used to find user hook files.
+ * @param {string} [options.projectDir] Explicit project directory. Its hooks are required.
+ * @param {boolean} [options.repair] True when files that doctor can regenerate should be rewritten.
+ * @param {string} [options.bin] `cosplaying` executable that regenerated hooks should embed.
+ * @returns {Promise<number>} `0` when there are no findings. `1` when one or more findings were printed.
  */
 export async function runDoctor(options) {
   const findings = [];
@@ -82,14 +95,19 @@ export async function runDoctor(options) {
 }
 
 /**
- * @param {string} file
- * @param {import('cosplaying/adapters').ExtensionHarness} harness
- * @param {string[]} commands
- * @param {boolean} required
- * @param {object} options
- * @param {string[]} findings
- * @param {string | undefined} projectDir
- * @param {{n: number}} managed
+ * Checks one Pi or OpenCode extension against the source this install would write.
+ *
+ * A required file that is missing is a finding. An optional missing file is ignored. A file without the ownership marker is not replaced. With `--repair`, a marked file that differs is regenerated.
+ *
+ * @param {string} file Extension path.
+ * @param {import('cosplaying/adapters').ExtensionHarness} harness Adapter that can render the expected source.
+ * @param {string[]} commands Plugin command names embedded in the expected source.
+ * @param {boolean} required True when a missing file is a finding.
+ * @param {object} options Doctor options. `repair` rewrites a mismatch. `bin` is embedded in the new source. `stdout` receives the repair line.
+ * @param {string[]} findings Finding messages. This function appends to the list.
+ * @param {string | undefined} projectDir Project directory for a repair install. Undefined for the user scope.
+ * @param {{n: number}} managed Counter of managed installs that were checked. It is incremented when the file contains the marker.
+ * @returns {void} No value. Results are appended to `findings` or written to stdout.
  */
 function inspectExtension(file, harness, commands, required, options, findings, projectDir, managed) {
   const expected = harness.render(commands, options.bin);
@@ -153,17 +171,22 @@ function inspectExtension(file, harness, commands, required, options, findings, 
 }
 
 /**
- * @param {string} file
- * @param {import('cosplaying/adapters').Harness} harness
- * @param {boolean} required
- * @param {object} options
- * @param {string[]} findings
- * @param {Map<string, object>} probeCache
- * @param {object[]} plugins
- * @param {string | undefined} projectDir
- * @param {string[]} commands
- * @param {{n: number}} managed
- * @param {Array<{harness: string, file: string}>} nodeRepairs
+ * Checks one JSON hook file for this harness's owned commands.
+ *
+ * The file must be UTF-8 JSON with an object root. Every event the harness registers must contain an owned command. Each owned command is then checked by {@link inspectCommand}.
+ *
+ * @param {string} file Settings path.
+ * @param {import('cosplaying/adapters').Harness} harness Adapter whose marker and events are required.
+ * @param {boolean} required True when a missing file or a file with no owned hook is a finding.
+ * @param {object} options Doctor options passed through to command inspection.
+ * @param {string[]} findings Finding messages. This function appends to the list.
+ * @param {Map<string, object>} probeCache Version and help results keyed by executable, so one binary is spawned once.
+ * @param {object[]} plugins Loaded plugins. Their commands and examples must appear in `--help`.
+ * @param {string | undefined} projectDir Project directory for a repair install.
+ * @param {string[]} commands Plugin command names passed to a repair install.
+ * @param {{n: number}} managed Counter of managed installs. It is incremented when the file has at least one owned command.
+ * @param {Array<{harness: string, file: string}>} nodeRepairs Files whose Node path was repaired. Doctor prints the retrust note for these harnesses.
+ * @returns {void} No value. Results are appended to `findings` or `nodeRepairs`.
  */
 function inspectJsonHooks(file, harness, required, options, findings, probeCache, plugins, projectDir, commands, managed, nodeRepairs) {
   let bytes;
@@ -229,14 +252,12 @@ function inspectJsonHooks(file, harness, required, options, findings, probeCache
   const listed = [];
   collectOwned(parsed, owner, listed);
   if (listed.length === 0) {
-    if (required || existsSync(file)) {
-      findings.push(new CosplayError({
-        name: 'doctor',
-        method: 'inspectJsonHooks',
-        message: 'missing owned hook in %s. Run cosplaying install for the user scope, or cosplaying install --project-dir <dir> for a project.',
-        args: [file],
-      }).message);
-    }
+    findings.push(new CosplayError({
+      name: 'doctor',
+      method: 'inspectJsonHooks',
+      message: 'missing owned hook in %s. Run cosplaying install for the user scope, or cosplaying install --project-dir <dir> for a project.',
+      args: [file],
+    }).message);
     return;
   }
   managed.n += 1;
@@ -257,14 +278,17 @@ function inspectJsonHooks(file, harness, required, options, findings, probeCache
 }
 
 /**
- * @param {unknown} value
- * @param {string} owner
- * @returns {Set<string>}
+ * Lists the hook events that contain a command owned by this install.
+ *
+ * Doctor requires every event the harness registers to appear in this set.
+ *
+ * @param {unknown} value Parsed settings object.
+ * @param {string} owner Marker text that identifies this install's commands.
+ * @returns {Set<string>} Event names whose entries include `owner`. An empty set when `hooks` is missing or is not an object.
  */
 function ownedEvents(value, owner) {
   /** @type {Set<string>} */
   const found = new Set();
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return found;
   const hooks = value.hooks;
   if (!hooks || typeof hooks !== 'object' || Array.isArray(hooks)) return found;
   for (const [event, entries] of Object.entries(hooks)) {
@@ -276,9 +300,14 @@ function ownedEvents(value, owner) {
 }
 
 /**
- * @param {unknown} value
- * @param {string} owner
- * @param {string[]} commands
+ * Appends command strings that contain the ownership marker.
+ *
+ * Nested objects and arrays are searched. A command that does not contain the marker is ignored, so foreign hooks are not probed.
+ *
+ * @param {unknown} value Settings value, entry, or list of entries.
+ * @param {string} owner Marker text that must appear in an owned command.
+ * @param {string[]} commands Destination list. Matching `command`, `bash`, and `powershell` strings are appended.
+ * @returns {void} No value. `commands` is updated in place.
  */
 function collectOwned(value, owner, commands) {
   if (!value || typeof value !== 'object') return;
@@ -293,17 +322,25 @@ function collectOwned(value, owner, commands) {
 }
 
 /**
- * @param {string} value
- * @returns {string}
+ * Returns the program name from a hook executable path.
+ *
+ * Doctor uses it to recognize `node` and `cosplaying` without comparing the whole path first.
+ *
+ * @param {string} value Executable path or name from the hook command.
+ * @returns {string} Final path segment with a trailing `.exe` removed.
  */
 function executableBase(value) {
   return path.basename(value).replace(/\.exe$/i, '');
 }
 
 /**
- * @param {string} left
- * @param {string} right
- * @returns {boolean}
+ * Reports whether two paths name the same file after symlinks are resolved.
+ *
+ * A hook may point at a symlink of this install. The canonical paths are compared. A path that cannot be resolved does not match.
+ *
+ * @param {string} left First path. An empty string does not match.
+ * @param {string} right Second path. An empty string does not match.
+ * @returns {boolean} True when both canonical paths are equal.
  */
 function sameFile(left, right) {
   if (!left || !right) return false;
@@ -315,10 +352,13 @@ function sameFile(left, right) {
 }
 
 /**
- * A version probe is allowed for this install's node script, a cosplaying basename, or this package's bin.
- * @param {string} executable
- * @param {string | undefined} script
- * @returns {boolean}
+ * Reports whether doctor may spawn a hook executable to read `--version`.
+ *
+ * The probe is allowed for this install's Node script, a program named `cosplaying`, or this package's bin. Any other absolute path is not spawned.
+ *
+ * @param {string} executable First word of the hook command.
+ * @param {string | undefined} script Script argument when the executable is Node. Undefined for a direct `cosplaying` command.
+ * @returns {boolean} True when the executable is this install or a `cosplaying` basename.
  */
 function canProbe(executable, script) {
   const base = executableBase(executable);
@@ -328,16 +368,21 @@ function canProbe(executable, script) {
 }
 
 /**
- * @param {string} command
- * @param {string} harness
- * @param {string} file
- * @param {object} options
- * @param {string[]} findings
- * @param {Map<string, object>} probeCache
- * @param {object[]} plugins
- * @param {string | undefined} projectDir
- * @param {string[]} commands
- * @param {Array<{harness: string, file: string}>} nodeRepairs
+ * Checks one owned hook command and, when allowed, runs `--version` and `--help`.
+ *
+ * The command must be a direct `agent-hook` invocation for this harness, with no pipes or redirects. The executable must be this install. `--version` must print this package version. `--help` must list the built-in commands and each plugin command and example. A missing Node executable is reinstalled when `--repair` is set.
+ *
+ * @param {string} command Hook command string from the settings file.
+ * @param {string} harness Harness id that must appear after `agent-hook`.
+ * @param {string} file Settings file that contains the command. It is named in findings.
+ * @param {object} options Doctor options. `repair` rewrites a missing Node path. `env` and `cwd` are used for the version probe.
+ * @param {string[]} findings Finding messages. This function appends to the list.
+ * @param {Map<string, object>} probeCache Cache of `{ version, help }` spawn results for one executable.
+ * @param {object[]} plugins Plugins whose help lines and examples must be present.
+ * @param {string | undefined} projectDir Project directory passed to a repair install.
+ * @param {string[]} commands Plugin command names passed to a repair install.
+ * @param {Array<{harness: string, file: string}>} nodeRepairs Repaired Node paths. One file is repaired once.
+ * @returns {void} No value. Results are appended to `findings` or `nodeRepairs`.
  */
 function inspectCommand(command, harness, file, options, findings, probeCache, plugins, projectDir, commands, nodeRepairs) {
   let tree;
@@ -457,10 +502,9 @@ function inspectCommand(command, harness, file, options, findings, probeCache, p
   const cacheKey = `${executable}\0${script || ''}`;
   let probe = probeCache.get(cacheKey);
   if (!probe) {
-    const spawn = options.spawnImpl || spawnSync;
     const spawnOptions = { encoding: 'utf8', timeout: 15000, cwd: options.cwd, env: options.env };
-    const version = spawn(executable, [...args, '--version'], spawnOptions);
-    const help = spawn(executable, [...args, '--help'], spawnOptions);
+    const version = spawnSync(executable, [...args, '--version'], spawnOptions);
+    const help = spawnSync(executable, [...args, '--help'], spawnOptions);
     probe = { version, help };
     probeCache.set(cacheKey, probe);
   }
@@ -520,17 +564,20 @@ function inspectCommand(command, harness, file, options, findings, probeCache, p
 }
 
 /**
- * Version-check a PATH entry named cosplaying. Unrecognized binaries are not spawned.
- * @param {object} options
- * @param {string[]} findings
+ * Compares the `cosplaying` executable on `PATH` with this package version.
+ *
+ * An unrecognized binary is not spawned. A missing `cosplaying` on `PATH` is not a finding, because the hooks can invoke Node and `main.js` directly.
+ *
+ * @param {object} options Doctor options. `env`, `platform`, and `cwd` are used to resolve and spawn the executable.
+ * @param {string[]} findings Finding messages. A version mismatch is appended.
+ * @returns {void} No value.
  */
 function checkPathVersion(options, findings) {
   const resolved = resolveRealBin('cosplaying', { env: options.env, platform: options.platform, cliPaths: [] });
   if (!resolved.bin || !canProbe(resolved.bin)) return;
-  const spawn = options.spawnImpl || spawnSync;
   let result;
   try {
-    result = spawn(resolved.bin, ['--version'], {
+    result = spawnSync(resolved.bin, ['--version'], {
       encoding: 'utf8',
       timeout: 15000,
       cwd: options.cwd,

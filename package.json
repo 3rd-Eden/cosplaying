@@ -27,8 +27,8 @@
     "LICENSE"
   ],
   "scripts": {
-    "prepare": "node scripts/link-notify.js",
-    "test": "node scripts/link-notify.js && node --test packages/*/test/*.test.js"
+    "prepare": "node scripts/link-plugins.js",
+    "test": "node scripts/link-plugins.js && node --test packages/*/test/*.test.js"
   },
   "engines": {
     "node": ">=22"

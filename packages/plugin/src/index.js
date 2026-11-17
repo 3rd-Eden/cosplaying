@@ -25,17 +25,28 @@ export const RESERVED_COMMANDS = new Set([
 ]);
 
 /**
- * @param {NodeJS.WritableStream} stderr
- * @param {string} reason
+ * Writes the standard refusal for a command that was not run.
+ *
+ * Plugins call this when attribution cannot be added. The text tells the agent not to bypass cosplaying when no safe correction is stated.
+ *
+ * @param {NodeJS.WritableStream} stderr Stream that receives the refusal. Plugins pass the hook stderr.
+ * @param {string} reason Why the command was refused, including the next action when one exists.
+ * @returns {void} No value.
  */
 export function block(stderr, reason) {
   stderr.write(`cosplaying: BLOCKED (command not run)\nReason: ${reason}\nIf no safe correction is stated, stop and ask the user; do not bypass cosplaying.\n`);
 }
 
 /**
- * @param {string} sourcePath
- * @param {(text: string) => string} render
- * @param {(copyPath: string) => unknown} work
+ * Runs work against a private copy of a text file after attribution is added.
+ *
+ * The original file is not modified. The copy is mode `0600` and is deleted after `work` finishes, including when `work` throws. A file that is not valid UTF-8 is rejected so the copy cannot hide replacement characters.
+ *
+ * @param {string} sourcePath Path of the file the wrapped command would have read.
+ * @param {(text: string) => string} render Function that returns the attributed text. It receives the original UTF-8 text.
+ * @param {(copyPath: string) => unknown} work Function that uses the copy. It receives the copy path. Its return value is the result of this function.
+ * @returns {Promise<unknown>} The value returned by `work`.
+ * @throws {CosplayError} The source cannot be read, is not UTF-8, or the copy cannot be written. The original file is unchanged.
  */
 export async function withAttributedCopy(sourcePath, render, work) {
   let bytes;
@@ -92,8 +103,14 @@ export async function withAttributedCopy(sourcePath, render, work) {
 }
 
 /**
- * @param {{env?: NodeJS.ProcessEnv, home?: string}} [options]
- * @returns {string}
+ * Returns the directory where installed plugin packages are stored.
+ *
+ * An absolute `XDG_DATA_HOME` selects the data root. Otherwise the directory is under the supplied home. Tests inject `home` so the developer data directory is not used.
+ *
+ * @param {object} [options]
+ * @param {NodeJS.ProcessEnv} [options.env=process.env] Environment. An absolute `XDG_DATA_HOME` overrides the home-based path.
+ * @param {string} [options.home=homedir()] Home directory used when `XDG_DATA_HOME` is absent or relative.
+ * @returns {string} `<data-root>/cosplaying/plugins`.
  */
 export function pluginDataDirectory({ env = process.env, home = homedir() } = {}) {
   const base = env.XDG_DATA_HOME && path.isAbsolute(env.XDG_DATA_HOME)
@@ -103,34 +120,43 @@ export function pluginDataDirectory({ env = process.env, home = homedir() } = {}
 }
 
 /**
- * @param {object | undefined} manifest
- * @returns {Record<string, unknown>}
+ * Returns the production dependencies declared by a plugin package.
+ *
+ * Optional dependencies are included because the plugin can require them at runtime. Development dependencies are omitted.
+ *
+ * @param {object | undefined} manifest Parsed `package.json`. A missing manifest has no dependencies.
+ * @param {Record<string, string>} [manifest.dependencies] Production dependency ranges.
+ * @param {Record<string, string>} [manifest.optionalDependencies] Optional dependency ranges.
+ * @returns {Record<string, unknown>} Combined dependency map. Later keys in `optionalDependencies` replace the same key in `dependencies`.
  */
 function productionDependencies(manifest) {
-  if (!manifest || typeof manifest !== 'object') return {};
   return {
-    ...(manifest.dependencies && typeof manifest.dependencies === 'object' ? manifest.dependencies : {}),
-    ...(manifest.optionalDependencies && typeof manifest.optionalDependencies === 'object' ? manifest.optionalDependencies : {}),
+    ...manifest?.dependencies,
+    ...manifest?.optionalDependencies,
   };
 }
 
 /**
- * live-plugin-manager installs a version range from the npm registry and an
- * owner/repo spec from GitHub. A file: or URL spec is not either of those.
- * installFromPath treats a spec that contains "/" as a GitHub repository and
- * throws before it links the package, so the plugin never gets node_modules.
- * @param {unknown} spec
- * @returns {boolean}
+ * Reports whether live-plugin-manager cannot install one dependency spec.
+ *
+ * That package installs a version range from the npm registry and an `owner/repo` spec from GitHub. A `file:`, URL, or path spec is neither of those. `installFromPath` treats a spec that contains `/` as a GitHub repository and throws before it links the package, so the plugin would have no `node_modules`.
+ *
+ * @param {unknown} spec Dependency range from `package.json`.
+ * @returns {boolean} True for an empty spec, a URL or protocol spec, or a relative or absolute path.
  */
 function livePluginManagerCannotInstall(spec) {
-  if (typeof spec !== 'string' || spec === '') return true;
+  if (spec === '') return true;
   if (/^(?:file|link|portal|workspace|git\+|github|http|https):/i.test(spec)) return true;
   return spec.startsWith('.') || spec.startsWith('/') || spec.startsWith('\\') || spec.startsWith('~');
 }
 
 /**
- * @param {object | undefined} manifest
- * @returns {RegExp[]}
+ * Builds ignore patterns for dependency specs that live-plugin-manager cannot install.
+ *
+ * The manager is told to skip those names. This installer then runs npm for the `file:` case the manager left behind.
+ *
+ * @param {object | undefined} manifest Parsed plugin `package.json`.
+ * @returns {RegExp[]} One anchored pattern per dependency name that the manager cannot install.
  */
 function unsupportedDependencyPatterns(manifest) {
   return Object.entries(productionDependencies(manifest))
@@ -139,8 +165,12 @@ function unsupportedDependencyPatterns(manifest) {
 }
 
 /**
- * @param {string} spec
- * @returns {{absolute: boolean, pathname?: string} | null}
+ * Parses a `file:` dependency spec into the path it names.
+ *
+ * A relative path must be rewritten after the plugin is copied, because the copy is no longer next to the author's tree. An absolute path can stay as it is.
+ *
+ * @param {string} spec Dependency spec from `package.json`.
+ * @returns {{absolute: boolean, pathname?: string} | null} Null when the spec is not `file:`. Otherwise whether the path is absolute, and the path when it could be read.
  */
 function fileDependencyTarget(spec) {
   const match = /^file:(.*)$/i.exec(spec);
@@ -159,20 +189,21 @@ function fileDependencyTarget(spec) {
 }
 
 /**
- * The installed tree is a copy, so a relative file: spec no longer points at
- * the author's package. Point it at the source tree before npm install.
- * @param {string} directory
- * @param {string} sourceDirectory
+ * Rewrites relative `file:` dependencies so they point at the source tree.
+ *
+ * The installed tree is a copy, so a relative spec no longer points at the author's package. Absolute `file:` specs are left unchanged. The manifest is written only when a spec changes.
+ *
+ * @param {string} directory Installed plugin directory whose `package.json` is edited.
+ * @param {string} sourceDirectory Plugin directory that was passed to install. Relative specs are resolved from here.
+ * @returns {void} No value.
  */
 function rewriteRelativeFileDependencies(directory, sourceDirectory) {
   const manifestPath = path.join(directory, 'package.json');
   const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
   let changed = false;
   for (const field of ['dependencies', 'optionalDependencies']) {
-    const deps = manifest[field];
-    if (!deps || typeof deps !== 'object') continue;
+    const deps = manifest[field] ?? {};
     for (const [name, spec] of Object.entries(deps)) {
-      if (typeof spec !== 'string') continue;
       const target = fileDependencyTarget(spec);
       if (!target || target.absolute || !target.pathname) continue;
       deps[name] = `file:${path.resolve(sourceDirectory, target.pathname)}`;
@@ -183,7 +214,11 @@ function rewriteRelativeFileDependencies(directory, sourceDirectory) {
 }
 
 /**
- * @returns {string}
+ * Finds the npm executable used to install plugin dependencies that the plugin manager skipped.
+ *
+ * The Node directory is searched before `PATH`, so the npm that belongs to this Node is preferred.
+ *
+ * @returns {string} Absolute npm path when `which` finds one. The name `npm` when it does not.
  */
 function npmExecutable() {
   const found = which.sync('npm', {
@@ -194,11 +229,14 @@ function npmExecutable() {
 }
 
 /**
- * live-plugin-manager already installs registry and GitHub dependencies.
- * This runs only when that left no node_modules and the package still has
- * production dependencies, which is the file: case it cannot install.
- * @param {string} directory
- * @param {string} [sourceDirectory]
+ * Installs production dependencies that live-plugin-manager did not install.
+ *
+ * The manager already installs registry and GitHub dependencies. This runs only when that left no `node_modules` and the package still has production dependencies, which is the `file:` case it cannot install. npm is run with `--ignore-scripts` and `--omit=dev`.
+ *
+ * @param {string} directory Installed plugin directory.
+ * @param {string} [sourceDirectory] Original plugin directory. Relative `file:` specs are rewritten from here before npm runs.
+ * @returns {void} No value. A directory that already has `node_modules`, or that has no production dependencies, is left unchanged.
+ * @throws {CosplayError} npm exits with an error or a non-zero status.
  */
 function installProductionDependencies(directory, sourceDirectory) {
   const manifestPath = path.join(directory, 'package.json');
@@ -228,9 +266,16 @@ function installProductionDependencies(directory, sourceDirectory) {
 }
 
 /**
- * @param {object} options
- * @param {object} [manifest]
- * @returns {PluginManager}
+ * Creates the plugin manager for this process.
+ *
+ * The manager stores plugins under the cosplaying data directory. Type packages are ignored. Dependency specs the manager cannot install are ignored so it does not treat a `file:` spec as a GitHub repository.
+ *
+ * @param {object} options Runtime context.
+ * @param {NodeJS.ProcessEnv} [options.env] Environment used to choose the data directory.
+ * @param {string} [options.home] Home directory used to choose the data directory.
+ * @param {string} [options.cwd] Working directory the manager uses for relative installs.
+ * @param {object} [manifest] Parsed `package.json` whose unsupported dependencies are ignored.
+ * @returns {PluginManager} Manager bound to the plugin data directory.
  */
 function managerFor(options, manifest) {
   return new PluginManager({
@@ -241,8 +286,12 @@ function managerFor(options, manifest) {
 }
 
 /**
- * @param {string} name
- * @returns {string}
+ * Removes an npm scope from a package name.
+ *
+ * The command the plugin intercepts is the unscoped name. `@example/git` becomes `git`.
+ *
+ * @param {string} name Package name or directory name.
+ * @returns {string} Name with a leading `@scope/` removed. `name` when it has no scope.
  */
 function unscoped(name) {
   return name.replace(/^@[^/]+\//, '');
@@ -251,8 +300,12 @@ function unscoped(name) {
 const COMMAND_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]*$/;
 
 /**
- * @param {string} name
- * @returns {CosplayError}
+ * Builds the error for a plugin command name that cannot be a shell word.
+ *
+ * The command is the executable that shell rewrite replaces. It must be one token of letters, digits, underscores, and hyphens.
+ *
+ * @param {string} name Unscoped package name that failed the command pattern.
+ * @returns {CosplayError} Error that tells the author to rename the package.
  */
 function commandNameError(name) {
   return new CosplayError({
@@ -264,9 +317,14 @@ function commandNameError(name) {
 }
 
 /**
- * @param {string} directory
- * @param {{name?: string, main?: string}} manifest
- * @returns {{name: string, mainFile: string}}
+ * Resolves the command name and the JavaScript file that implements a plugin.
+ *
+ * The command is the unscoped package name, or the directory name when the manifest has no name. `main` defaults to `index.js`. The file must stay inside the plugin directory after symlinks are resolved, and it must not be TypeScript. Node will not type-strip a file under `node_modules`.
+ *
+ * @param {string} directory Plugin directory that contains `package.json`.
+ * @param {{name?: string, main?: string}} manifest Parsed `package.json`.
+ * @returns {{name: string, mainFile: string}} Unscoped command name and the canonical entry path.
+ * @throws {CosplayError} The command name is not a single token, the entry is TypeScript, or the entry resolves outside the plugin directory.
  */
 function resolvePluginEntry(directory, manifest) {
   const name = unscoped(manifest.name || path.basename(directory));
@@ -306,8 +364,12 @@ function resolvePluginEntry(directory, manifest) {
 }
 
 /**
- * @param {string} source
- * @returns {string | null}
+ * Reads an `owner/repo` GitHub spec from a plugin install source.
+ *
+ * A GitHub URL and a bare `owner/repo` spec are accepted. A local path is not a repository. A `#ref` suffix is removed.
+ *
+ * @param {string} source Argument of `plugin install`.
+ * @returns {string | null} `owner/repo` when the source is a GitHub repository. Null for a local path or any other source.
  */
 function githubRepo(source) {
   const remote = source.match(/github\.com[:/]([^/]+)\/([^/#.]+)/);
@@ -317,8 +379,14 @@ function githubRepo(source) {
 }
 
 /**
- * @param {string} mainFile
- * @param {string} name
+ * Imports a plugin module and reads the fields the CLI needs.
+ *
+ * `require` cannot load an ESM package, so the entry is imported by file URL. The default export may be the `run` function or an object with `run`. `description`, `examples`, and `intercept` may be named exports or fields of that object. A command that shadows a built-in command is rejected.
+ *
+ * @param {string} mainFile Absolute path of the plugin entry file.
+ * @param {string} name Unscoped command name.
+ * @returns {Promise<{command: string, run: Function | undefined, description: string, examples: string[], intercept: boolean | undefined}>} Descriptor used by `hook` and by help. `intercept` is undefined when the plugin does not set it, which means the command is rewritten.
+ * @throws {CosplayError} `name` is a reserved CLI command, or Node cannot import the entry.
  */
 async function loadModule(mainFile, name) {
   if (RESERVED_COMMANDS.has(name)) {
@@ -347,18 +415,19 @@ async function loadModule(mainFile, name) {
   return {
     command: name,
     run,
-    description: typeof fields?.description === 'string' ? fields.description : '',
-    examples: Array.isArray(fields?.examples) ? fields.examples : [],
+    description: fields?.description ?? '',
+    examples: fields?.examples ?? [],
     intercept: fields?.intercept,
   };
 }
 
 /**
- * Package directories under the plugin data directory.
- * `live-plugin-manager` links a scoped package at `plugins/@scope/<name>`.
- * `.versions` is its download cache and is not a plugin.
- * @param {string} root
- * @returns {string[]}
+ * Lists installed plugin directories under the plugin data directory.
+ *
+ * live-plugin-manager links a scoped package at `plugins/@scope/<name>`. A directory is included only when it contains `package.json`. `.versions` is the download cache and is skipped because its name starts with a dot.
+ *
+ * @param {string} root Plugin data directory. A missing directory yields an empty list.
+ * @returns {string[]} Absolute package directories. The order is the directory order from `readdir`.
  */
 function pluginPackageDirectories(root) {
   /** @type {string[]} */
@@ -393,16 +462,20 @@ function pluginPackageDirectories(root) {
 }
 
 /**
- * @param {string} root
- * @param {string} name
- * @returns {Array<{directory: string, manifest: {name?: string}, command: string}>}
+ * Finds installed plugins whose command or package name equals `name`.
+ *
+ * Uninstall uses this so either the command or the scoped package name selects the directory. Two matches are returned to the caller, which refuses an ambiguous name.
+ *
+ * @param {string} root Plugin data directory.
+ * @param {string} name Command name or package name from the command line.
+ * @returns {Array<{directory: string, manifest: {name?: string}, command: string}>} Matching packages. An empty list when none match.
  */
 function matchingPlugins(root, name) {
   /** @type {Array<{directory: string, manifest: {name?: string}, command: string}>} */
   const matches = [];
   for (const directory of pluginPackageDirectories(root)) {
     const manifest = JSON.parse(readFileSync(path.join(directory, 'package.json'), 'utf8'));
-    const packageName = typeof manifest.name === 'string' ? manifest.name : path.basename(directory);
+    const packageName = manifest.name || path.basename(directory);
     const command = unscoped(packageName);
     if (command === name || packageName === name) matches.push({ directory, manifest, command });
   }
@@ -410,9 +483,13 @@ function matchingPlugins(root, name) {
 }
 
 /**
- * @param {string} name
- * @param {string} directory
- * @returns {string}
+ * Builds the error text for a plugin that is already installed.
+ *
+ * A second `installFromPath` would succeed, so install refuses it and tells the operator to uninstall first.
+ *
+ * @param {string} name Plugin command name.
+ * @param {string} directory Directory of the plugin that is already installed.
+ * @returns {string} Error text that includes the uninstall command.
  */
 function alreadyInstalledMessage(name, directory) {
   return new CosplayError({
@@ -424,8 +501,16 @@ function alreadyInstalledMessage(name, directory) {
 }
 
 /**
- * @param {{env?: NodeJS.ProcessEnv, home?: string, platform?: NodeJS.Platform}} [options]
- * @returns {Promise<Array<{name: string, command: string, kind: string, directory: string, entry: string, descriptor: Record<string, unknown>}>>}
+ * Loads every plugin package stored in the plugin data directory.
+ *
+ * `list()` on the plugin manager only remembers plugins installed in the current process, so a later process reads the package directories instead. The result is sorted by command name.
+ *
+ * @param {object} [options]
+ * @param {NodeJS.ProcessEnv} [options.env] Environment used to choose the data directory.
+ * @param {string} [options.home] Home directory used to choose the data directory.
+ * @param {NodeJS.Platform} [options.platform] Accepted for callers that pass the whole context. This function does not read it.
+ * @returns {Promise<Array<{name: string, command: string, kind: string, directory: string, entry: string, descriptor: Record<string, unknown>}>>} Installed plugins. `kind` is `path`. `descriptor` is the imported module fields.
+ * @throws {CosplayError} A package entry cannot be imported, or two packages declare the same command when a later loader checks them.
  */
 export async function loadInstalledPlugins(options = {}) {
   const loaded = [];
@@ -447,8 +532,14 @@ export async function loadInstalledPlugins(options = {}) {
 }
 
 /**
- * @param {string} directory
- * @param {string} kind
+ * Loads one plugin directory and labels where it came from.
+ *
+ * A configured path and a shipped plugin both use this. The kind tells `plugin list` whether the plugin is installed or bundled.
+ *
+ * @param {string} directory Directory that contains the plugin `package.json`.
+ * @param {string} kind `path` for an installed or configured directory. `bundled` for a plugin that ships in this package.
+ * @returns {Promise<{name: string, command: string, kind: string, directory: string, entry: string, descriptor: object}>} Plugin record for the CLI.
+ * @throws {CosplayError} The entry cannot be resolved or imported.
  */
 async function loadPluginDirectory(directory, kind) {
   const manifest = JSON.parse(readFileSync(path.join(directory, 'package.json'), 'utf8'));
@@ -465,19 +556,19 @@ async function loadPluginDirectory(directory, kind) {
 }
 
 /**
- * @param {Record<string, string> | undefined} bundled
- * @param {string} name
- * @returns {string}
- */
-function bundledDirectory(bundled, name) {
-  if (!bundled || typeof bundled !== 'object') return '';
-  const directory = bundled[name];
-  return typeof directory === 'string' ? directory : '';
-}
-
-/**
- * @param {string[]} entries
- * @param {{cwd?: string, env?: NodeJS.ProcessEnv, home?: string, platform?: NodeJS.Platform, bundled?: Record<string, string>}} options
+ * Loads installed plugins plus the entries named in settings.
+ *
+ * Every installed plugin is included. A settings entry that is a path is loaded from that directory. A bare name uses the installed plugin of that name, or a shipped plugin when no installed plugin has the name. Two plugins with the same command are rejected.
+ *
+ * @param {string[]} entries `plugins` list from settings. Each item is a command name or a path.
+ * @param {object} options Runtime context.
+ * @param {string} [options.cwd] Directory used to resolve a relative path entry.
+ * @param {NodeJS.ProcessEnv} [options.env] Environment used to find installed plugins.
+ * @param {string} [options.home] Home directory used to find installed plugins.
+ * @param {NodeJS.Platform} [options.platform] Accepted with the rest of the context. This function does not read it.
+ * @param {Record<string, string>} [options.bundled] Map of shipped plugin name to directory.
+ * @returns {Promise<object[]>} Selected plugins. Installed plugins come first, then settings entries that were not already included.
+ * @throws {CosplayError} A named plugin is not installed and is not shipped, or two plugins declare the same command.
  */
 export async function loadConfiguredPlugins(entries, options) {
   const installed = await loadInstalledPlugins(options);
@@ -505,7 +596,7 @@ export async function loadConfiguredPlugins(entries, options) {
       plugin = await loadPluginDirectory(directory, 'path');
     } else {
       plugin = byName.get(entry);
-      const shipped = bundledDirectory(options.bundled, entry);
+      const shipped = options.bundled?.[entry];
       if (!plugin && shipped) plugin = await loadPluginDirectory(shipped, 'bundled');
       if (!plugin) {
         throw new CosplayError({
@@ -533,9 +624,15 @@ export async function loadConfiguredPlugins(entries, options) {
 }
 
 /**
- * @param {string} command
- * @param {{env?: NodeJS.ProcessEnv, platform?: NodeJS.Platform, cliPaths?: string[]}} options
- * @returns {{bin?: string, error?: string}}
+ * Finds the real executable for a command that this CLI must not call again.
+ *
+ * `COSPLAYING_<COMMAND>_BIN` overrides `PATH` and must be an absolute path of a regular file. Candidates that resolve to this CLI or to Node are skipped. When every candidate is this process, the result is an error so the hook cannot recurse.
+ *
+ * @param {string} command Executable name, for example `git` or a harness binary.
+ * @param {object} [options]
+ * @param {NodeJS.ProcessEnv} [options.env=process.env] Environment. `PATH`, `PATHEXT`, and `COSPLAYING_<COMMAND>_BIN` are read.
+ * @param {string[]} [options.cliPaths=[]] Absolute paths of this CLI and of Node. A candidate that resolves to one of these is skipped.
+ * @returns {{bin?: string, error?: string}} `bin` is the executable to spawn. `error` is the text to show when no usable executable exists. Exactly one of the two is set.
  */
 export function resolveRealBin(command, { env = process.env, cliPaths = [] } = {}) {
   const overrideName = `COSPLAYING_${command.toUpperCase().replace(/[^A-Za-z0-9]/g, '_')}_BIN`;
@@ -633,9 +730,17 @@ export function resolveRealBin(command, { env = process.env, cliPaths = [] } = {
 }
 
 /**
- * @param {string} source
- * @param {{env?: NodeJS.ProcessEnv, cwd?: string, home?: string, platform?: NodeJS.Platform, spawnImpl?: Function}} options
- * @returns {Promise<{ok: true, name: string, directory: string} | {ok: false, error: string}>}
+ * Installs a plugin from a GitHub repository or a local directory.
+ *
+ * A GitHub `owner/repo` source uses `installFromGithub`. Any other source must be a directory that contains `package.json`, and that directory uses `installFromPath`. A second install of the same command is refused. Production dependencies that the manager cannot install are installed with npm. A failed dependency install removes the plugin that was just copied.
+ *
+ * @param {string} source GitHub `owner/repo`, a GitHub URL, or a local plugin directory.
+ * @param {object} options Runtime context.
+ * @param {NodeJS.ProcessEnv} [options.env] Environment used for the data directory and npm.
+ * @param {string} [options.cwd] Directory used to resolve a relative source and to tell a path from a repository.
+ * @param {string} [options.home] Home directory used for the data directory.
+ * @param {NodeJS.Platform} [options.platform] Accepted with the rest of the context. This function does not read it.
+ * @returns {Promise<{ok: true, name: string, directory: string} | {ok: false, error: string}>} Success includes the command name and the installed directory. Failure includes the error text and does not throw.
  */
 export async function installPlugin(source, options) {
   const repo = githubRepo(source);
@@ -706,17 +811,6 @@ export async function installPlugin(source, options) {
       return { ok: false, error: error instanceof CosplayError ? error.message : caughtInstallError(source, error) };
     }
     const name = resolved.name;
-    if (!name) {
-      return {
-        ok: false,
-        error: new CosplayError({
-          name: 'plugin',
-          method: 'installPlugin',
-          message: 'plugin package.json at %s could not be read: %s. Add a package.json with name, version, and main.',
-          args: [path.join(directory, 'package.json'), 'missing name'],
-        }).message,
-      };
-    }
     if (RESERVED_COMMANDS.has(name)) {
       return {
         ok: false,
@@ -751,13 +845,20 @@ export async function installPlugin(source, options) {
 }
 
 /**
- * @param {string} name
- * @param {{env?: NodeJS.ProcessEnv, home?: string, platform?: NodeJS.Platform}} options
- * @returns {{ok: true} | {ok: false, error: string}}
+ * Removes one installed plugin by command name or package name.
+ *
+ * The name must select exactly one directory inside the plugin data directory. An absolute path or a `..` segment is refused. The manager is asked to uninstall that package.
+ *
+ * @param {string} name Command name or package name from `plugin list`.
+ * @param {object} options Runtime context.
+ * @param {NodeJS.ProcessEnv} [options.env] Environment used to find the data directory.
+ * @param {string} [options.home] Home directory used to find the data directory.
+ * @param {NodeJS.Platform} [options.platform] Accepted with the rest of the context. This function does not read it.
+ * @returns {Promise<{ok: true} | {ok: false, error: string}>} Success has no extra fields. Failure includes the error text and does not throw.
  */
 export async function uninstallPlugin(name, options) {
   const root = pluginDataDirectory(options);
-  if (typeof name !== 'string' || name === '' || path.isAbsolute(name) || name.split(/[\\/]/).includes('..')) {
+  if (path.isAbsolute(name) || name.split(/[\\/]/).includes('..')) {
     return {
       ok: false,
       error: new CosplayError({
@@ -792,7 +893,7 @@ export async function uninstallPlugin(name, options) {
     };
   }
   const { directory, manifest } = matches[0];
-  const packageName = typeof manifest.name === 'string' ? manifest.name : name;
+  const packageName = manifest.name || name;
   try {
     const manager = managerFor(options, manifest);
     if (!manager.alreadyInstalled(packageName)) await manager.installFromPath(directory);
@@ -812,8 +913,12 @@ export async function uninstallPlugin(name, options) {
 }
 
 /**
- * @param {object} options
- * @returns {Promise<Array<{name: string, command: string, kind: string, directory: string}>>}
+ * Lists installed plugins without their imported descriptors.
+ *
+ * `plugin list` prints this. Shipped plugins that are enabled but not installed are added by the CLI, not by this function.
+ *
+ * @param {object} options Runtime context passed to {@link loadInstalledPlugins}.
+ * @returns {Promise<Array<{name: string, command: string, kind: string, directory: string}>>} Installed plugins sorted by command name.
  */
 export async function listPlugins(options) {
   const plugins = await loadInstalledPlugins(options);
@@ -826,9 +931,13 @@ export async function listPlugins(options) {
 }
 
 /**
- * @param {string} command
- * @param {unknown} error
- * @returns {string}
+ * Builds the stderr line for a command that could not be spawned.
+ *
+ * The line names the executable and the `COSPLAYING_<COMMAND>_BIN` override so the operator can point at the real binary.
+ *
+ * @param {string} command Executable path that failed to start.
+ * @param {unknown} error Spawn error. `message` is included in the line.
+ * @returns {string} One line that ends with a newline.
  */
 function launchErrorLine(command, error) {
   const bin = path.basename(command);
@@ -837,11 +946,14 @@ function launchErrorLine(command, error) {
 }
 
 /**
- * @param {{stderr?: {write?: (chunk: string) => unknown}, stdio?: unknown}} options
- * @returns {{write: (chunk: string) => unknown} | null}
+ * Returns the stderr stream from a spawn stdio array, when the caller supplied one.
+ *
+ * A launch error is written there so a captured spawn still records the failure. Inherited stdio has no stream to return.
+ *
+ * @param {{stdio?: unknown}} options Spawn options. `stdio[2]` is used when it has a `write` method.
+ * @returns {{write: (chunk: string) => unknown} | null} The stderr stream. Null when stdio is not an array or stderr is not a stream.
  */
 function launchErrorStream(options) {
-  if (options.stderr && typeof options.stderr.write === 'function') return options.stderr;
   if (Array.isArray(options.stdio)) {
     const target = options.stdio[2];
     if (target && typeof target.write === 'function') return target;
@@ -850,27 +962,33 @@ function launchErrorStream(options) {
 }
 
 /**
- * @param {string} command
- * @param {unknown} error
- * @param {object} options
- * @param {boolean} always
+ * Writes a launch failure to the spawn stderr, or to the process stderr.
+ *
+ * The wrapped command was not run. The message says that, so the agent does not treat a missing executable as a successful empty result.
+ *
+ * @param {string} command Executable path that failed to start.
+ * @param {unknown} error Spawn error.
+ * @param {object} options Spawn options. A stream at `stdio[2]` receives the line. Otherwise the process stderr is used.
+ * @returns {void} No value.
  */
-function reportLaunchError(command, error, options, always) {
+function reportLaunchError(command, error, options) {
   const line = launchErrorLine(command, error);
   const stream = launchErrorStream(options);
   if (stream) {
     stream.write(line);
     return;
   }
-  if (always) process.stderr.write(line);
+  process.stderr.write(line);
 }
 
 /**
- * Node refuses a direct spawn of a .bat or .cmd file with EINVAL.
- * cmd.exe runs those files. Each token uses the same Windows quoting as hook commands.
- * @param {string} command
- * @param {string[]} args
- * @returns {{command: string, args: string[], windowsVerbatimArguments?: boolean}}
+ * Adapts a spawn target so Windows batch files can start.
+ *
+ * Node refuses a direct spawn of a `.bat` or `.cmd` file with `EINVAL`. `cmd.exe` runs those files. Each token uses the same Windows quoting as hook commands. Other platforms and other file types are returned unchanged.
+ *
+ * @param {string} command Executable path.
+ * @param {string[]} args Arguments for that executable.
+ * @returns {{command: string, args: string[], windowsVerbatimArguments?: boolean}} The command and arguments to pass to Node. `windowsVerbatimArguments` is set only for the `cmd.exe` form.
  */
 function spawnCommand(command, args) {
   if (process.platform !== 'win32' || !/\.(?:bat|cmd)$/i.test(command)) return { command, args };
@@ -885,29 +1003,22 @@ function spawnCommand(command, args) {
 }
 
 /**
- * @param {object} options
- * @returns {object}
- */
-function spawnSyncOptions(options) {
-  const rest = { ...options, shell: false };
-  delete rest.stderr;
-  return rest;
-}
-
-/**
- * Default spawn used by plugins. Tests pass spawnImpl instead.
- * A launch error returns status 127 and reports the command was not run.
- * @param {string} command
- * @param {string[]} args
- * @param {import('node:child_process').SpawnOptions & {encoding?: BufferEncoding, input?: string, stderr?: {write?: (chunk: string) => unknown}}} [options]
+ * Spawns a command for a plugin and returns a `{ status }` result.
+ *
+ * Plugins depend on that shape. A captured call uses `spawnSync` when `encoding`, `input`, or a piped stdio entry is set. Otherwise the child is spawned and the returned promise resolves on exit. A launch error is status `127`, and the error text says the command was not run.
+ *
+ * @param {string} command Executable path.
+ * @param {string[]} args Arguments. They are not parsed by a shell.
+ * @param {import('node:child_process').SpawnOptions & {encoding?: BufferEncoding, input?: string | Buffer}} [options] Spawn options. `shell` is forced off.
+ * @returns {import('node:child_process').SpawnSyncReturns<string | Buffer> | Promise<{status: number, error?: Error}>} A synchronous result for a captured call. A promise for an inherited-stdio call. `status` is `127` when the process cannot be started.
  */
 export function defaultSpawn(command, args, options = {}) {
-  const target = spawnCommand(command, args || []);
+  const target = spawnCommand(command, args);
   const verbatim = target.windowsVerbatimArguments ? { windowsVerbatimArguments: true } : {};
   if (options.encoding || options.input !== undefined || (Array.isArray(options.stdio) && options.stdio.includes('pipe'))) {
-    const result = spawnSync(target.command, target.args, { ...spawnSyncOptions(options), ...verbatim });
+    const result = spawnSync(target.command, target.args, { ...options, shell: false, ...verbatim });
     if (result.error) {
-      reportLaunchError(command, result.error, options, true);
+      reportLaunchError(command, result.error, options);
       if (!launchErrorStream(options) && typeof result.stderr === 'string') {
         result.stderr = launchErrorLine(command, result.error);
       }
@@ -917,12 +1028,20 @@ export function defaultSpawn(command, args, options = {}) {
   }
   return new Promise((resolve) => {
     let settled = false;
+    let child;
+    /**
+     * Resolves the async spawn once.
+     *
+     * Both the error event and the exit event can fire. The first result is the one the plugin sees.
+     *
+     * @param {{status: number, error?: Error}} result Status object in the spawnSync shape.
+     * @returns {void} No value.
+     */
     const finish = (result) => {
       if (settled) return;
       settled = true;
       resolve(result);
     };
-    let child;
     try {
       child = spawn(target.command, target.args, {
         cwd: options.cwd,
@@ -932,12 +1051,12 @@ export function defaultSpawn(command, args, options = {}) {
         ...verbatim,
       });
     } catch (error) {
-      reportLaunchError(command, error, options, true);
+      reportLaunchError(command, error, options);
       finish({ status: 127, error });
       return;
     }
     child.on('error', (error) => {
-      reportLaunchError(command, error, options, true);
+      reportLaunchError(command, error, options);
       finish({ status: 127, error });
     });
     child.on('exit', (status) => finish({ status: status ?? 1 }));
@@ -945,9 +1064,13 @@ export function defaultSpawn(command, args, options = {}) {
 }
 
 /**
- * @param {string} source
- * @param {unknown} error
- * @returns {string}
+ * Turns an install failure into the text `plugin install` prints.
+ *
+ * A `CosplayError` already has the operator action, so its message is used as-is. Any other error is wrapped with the data-directory hint.
+ *
+ * @param {string} source Install source that failed. It is included in the wrapped message.
+ * @param {unknown} error Value thrown by the plugin manager or by the file system.
+ * @returns {string} Error text for stderr. This function does not throw.
  */
 function caughtInstallError(source, error) {
   if (error instanceof CosplayError) return error.message;
@@ -960,6 +1083,14 @@ function caughtInstallError(source, error) {
   }).message;
 }
 
+/**
+ * Reports whether a path exists.
+ *
+ * A missing path and a path that cannot be stated are both absent. Callers use this before they read a manifest or skip an npm install.
+ *
+ * @param {string} file Path to test.
+ * @returns {boolean} True when `stat` succeeds. False when it throws.
+ */
 function exists(file) {
   try {
     statSync(file);

@@ -31,8 +31,12 @@ const CORE_HELP = [
 ];
 
 /**
- * @param {Array<{command: string, descriptor: {description: string, examples: string[]}}>} plugins
- * @returns {string}
+ * Builds the help text for this CLI.
+ *
+ * The built-in commands are listed first. Plugin commands and their examples follow, so `cosplaying --help` shows the commands the agent may wrap.
+ *
+ * @param {Array<{command: string, descriptor: {description: string, examples: string[]}}>} [plugins=[]] Loaded plugins. Each descriptor supplies the help line and the example lines.
+ * @returns {string} Help text ending with a newline.
  */
 export function renderHelp(plugins = []) {
   const lines = ['cosplaying', ''];
@@ -42,8 +46,12 @@ export function renderHelp(plugins = []) {
 }
 
 /**
- * @param {string} id
- * @returns {string}
+ * Builds the error text for a harness id this CLI does not know.
+ *
+ * Install and model resolution use it when `--harness` or `--agent` names something other than the six supported agents.
+ *
+ * @param {string} id Harness id from the command line.
+ * @returns {string} Error text that lists the supported harness ids.
  */
 export function unknownHarness(id) {
   return new CosplayError({
@@ -55,16 +63,25 @@ export function unknownHarness(id) {
 }
 
 /**
- * @param {{write: (chunk: string) => void}} stderr
- * @param {string} message
+ * Writes one CLI error line to stderr.
+ *
+ * The line starts with `cosplaying:` so the agent can tell this failure from the wrapped command's own output. A message that already ends with a newline is not given a second one.
+ *
+ * @param {{write: (chunk: string) => void}} stderr Stream that receives the line.
+ * @param {string} message Error text. A trailing newline is added when it is missing.
+ * @returns {void} No value.
  */
 function report(stderr, message) {
   stderr.write(`cosplaying: ${message.endsWith('\n') ? message : `${message}\n`}`);
 }
 
 /**
- * @param {Array<{command: string, descriptor: {description?: string, examples?: string[]}}>} plugins
- * @returns {string}
+ * Builds the plugin section of the help text.
+ *
+ * Doctor checks that `--help` contains each plugin command indented two spaces and each example indented four spaces.
+ *
+ * @param {Array<{command: string, descriptor: {description?: string, examples?: string[]}}>} plugins Loaded plugins.
+ * @returns {string} A `Plugins:` section ending with a newline. An empty string when there are no plugins.
  */
 function pluginHelp(plugins) {
   if (!plugins.length) return '';
@@ -78,9 +95,20 @@ function pluginHelp(plugins) {
 }
 
 /**
- * @param {string[]} argv
- * @param {object} [options]
- * @returns {Promise<number>}
+ * Parses argv and runs one cosplaying command.
+ *
+ * The commands are `hook`, `agent-hook`, `rewrite`, `install`, `uninstall`, `doctor`, and `plugin`. No arguments print help and exit with status 2.
+ *
+ * @param {string[]} argv Arguments after the program name.
+ * @param {object} [options] Streams and paths. Tests pass these so the developer home and the real process are not used.
+ * @param {NodeJS.WritableStream} [options.stdout] Stream for help and command output. The process stdout is used when this is omitted.
+ * @param {NodeJS.WritableStream} [options.stderr] Stream for errors. The process stderr is used when this is omitted.
+ * @param {NodeJS.ProcessEnv} [options.env] Environment for settings, plugins, and model lookup.
+ * @param {string} [options.cwd] Working directory for project settings and Git root lookup.
+ * @param {string} [options.home] Home directory for user settings and harness files.
+ * @param {NodeJS.Platform} [options.platform] Platform used to quote hook commands.
+ * @param {NodeJS.ReadStream} [options.stdin] Stdin for `agent-hook` and plugins.
+ * @returns {Promise<number>} Process exit code. `0` for success and for help or version. `1` for a failed command. `2` for bad arguments or an unknown command.
  */
 export async function main(argv, options = {}) {
   const context = {
@@ -90,8 +118,6 @@ export async function main(argv, options = {}) {
     cwd: options.cwd || process.cwd(),
     home: options.home || homedir(),
     platform: options.platform || process.platform,
-    spawnImpl: options.spawnImpl,
-    input: options.input,
     stdin: options.stdin,
   };
   const program = new Command();
@@ -107,6 +133,15 @@ export async function main(argv, options = {}) {
     })
     .version(packageVersion(), '-v, --version');
   let code = 0;
+  /**
+   * Appends one repeated Commander flag value.
+   *
+   * `--harness` and `--agent` may be passed more than once. Commander stores the growing list.
+   *
+   * @param {string} value Flag value from this occurrence.
+   * @param {string[]} previous Values already collected for the same flag.
+   * @returns {string[]} `previous` with `value` appended.
+   */
   const collect = (value, previous) => previous.concat(value);
   program.command('hook')
     .description('Run a wrapped command')
@@ -192,9 +227,14 @@ export async function main(argv, options = {}) {
 }
 
 /**
- * @param {object} context
- * @param {unknown} error
- * @returns {number}
+ * Maps a Commander failure to a process exit code.
+ *
+ * Help and version are success. An unknown command and a bad flag are usage errors. Any other thrown error is a command failure.
+ *
+ * @param {object} context Runtime context.
+ * @param {NodeJS.WritableStream} context.stderr Stream that receives the error line.
+ * @param {unknown} error Value thrown by Commander or by a command action.
+ * @returns {number} `0` for help and version, `2` for usage errors, and `1` for every other error.
  */
 function commandError(context, error) {
   const code = error.code || '';
@@ -225,8 +265,12 @@ function commandError(context, error) {
 }
 
 /**
- * @param {object} context
- * @returns {Promise<object[]>}
+ * Loads plugins for the help text.
+ *
+ * Help must still print when settings or a plugin cannot be loaded. In that case the plugin section is omitted.
+ *
+ * @param {object} context Runtime context passed to the plugin loader.
+ * @returns {Promise<object[]>} Loaded plugins. An empty list when loading throws.
  */
 async function pluginsForHelp(context) {
   try {
@@ -237,7 +281,11 @@ async function pluginsForHelp(context) {
 }
 
 /**
- * @returns {string}
+ * Builds the usage error for `cosplaying plugin` with no action.
+ *
+ * The text names `install`, `uninstall`, `list`, `enable`, and `disable`.
+ *
+ * @returns {string} Error text for a missing plugin action.
  */
 function pluginUsage() {
   return new CosplayError({
@@ -248,9 +296,16 @@ function pluginUsage() {
 }
 
 /**
- * @param {object} parsed
- * @param {NodeJS.ProcessEnv} env
- * @returns {{model: string, error?: string}}
+ * Chooses the model name for `hook` and `rewrite`.
+ *
+ * `--model-base64` is decoded first. `--model` is plain text and must not be empty or start with a dash. `COSPLAYING_MODEL` is next. `--harness` uses that harness label when no model was given. The settings file is never a source.
+ *
+ * @param {object} parsed Flags accepted by Commander.
+ * @param {string} [parsed.model] Plain model name from `--model`.
+ * @param {string} [parsed.modelBase64] Base64url model name from `--model-base64`.
+ * @param {string} [parsed.harness] Harness id whose label is the fallback model.
+ * @param {NodeJS.ProcessEnv} env Environment. `COSPLAYING_MODEL` is used when no flag sets the model.
+ * @returns {{model: string, error?: string}} The model name, or an empty model and `error` text when a flag is present but invalid.
  */
 function resolveCliModel(parsed, env) {
   if (Object.hasOwn(parsed, 'modelBase64')) {
@@ -265,19 +320,7 @@ function resolveCliModel(parsed, env) {
         }).message,
       };
     }
-    let decoded = '';
-    try {
-      decoded = Buffer.from(raw, 'base64url').toString('utf8');
-    } catch {
-      return {
-        model: '',
-        error: new CosplayError({
-          name: 'cli',
-          method: 'resolveModel',
-          message: '--model-base64 must be base64url. Pass the model name with --model <name> when typing the command. Pass the model as plain text with --model <name>. Hooks pass --model-base64 for you.',
-        }).message,
-      };
-    }
+    const decoded = Buffer.from(raw, 'base64url').toString('utf8');
     const model = normalizeIdentity(decoded);
     if (!model) {
       return {
@@ -317,11 +360,18 @@ function resolveCliModel(parsed, env) {
 const HOOK_FLAGS = new Set(['--model', '--model-base64', '--harness']);
 
 /**
- * @param {string[]} argv
- * @param {string[]} commandArgs
- * @param {{model?: string, modelBase64?: string, harness?: string}} options
- * @param {object} context
- * @returns {Promise<number>}
+ * Runs one wrapped command through its plugin.
+ *
+ * The plugin receives the real executable, the model, and the attribution helpers. `COSPLAYING_INSIDE_HOOK` makes a nested call spawn the real executable directly, so a plugin cannot call this CLI again for the same command.
+ *
+ * @param {string[]} argv Original arguments, used to see whether `--` separated the hook flags from the command.
+ * @param {string[]} commandArgs Words after `hook`. The first word is the plugin command.
+ * @param {object} options Parsed hook flags.
+ * @param {string} [options.model] Plain model name.
+ * @param {string} [options.modelBase64] Base64url model name.
+ * @param {string} [options.harness] Harness id used as the model fallback.
+ * @param {object} context Runtime context. It supplies the streams, environment, working directory, home, platform, and stdin.
+ * @returns {Promise<number>} Exit code from the plugin, or `1` when the plugin or the real executable cannot be used, or `2` for a usage error.
  */
 async function runHook(argv, commandArgs, options, context) {
   const separated = argv.includes('--');
@@ -344,12 +394,7 @@ async function runHook(argv, commandArgs, options, context) {
       return 2;
     }
   }
-  /** @type {{model?: string, modelBase64?: string, harness?: string}} */
-  const present = {};
-  if (options.model !== undefined) present.model = options.model;
-  if (options.modelBase64 !== undefined) present.modelBase64 = options.modelBase64;
-  if (options.harness !== undefined) present.harness = options.harness;
-  const resolved = resolveCliModel(present, context.env);
+  const resolved = resolveCliModel(options, context.env);
   if (resolved.error) {
     report(context.stderr, resolved.error);
     return 2;
@@ -400,9 +445,8 @@ async function runHook(argv, commandArgs, options, context) {
     report(context.stderr, real.error);
     return 1;
   }
-  const spawn = context.spawnImpl || defaultSpawn;
   if (context.env.COSPLAYING_INSIDE_HOOK === '1') {
-    const result = await spawn(real.bin, args, { stdio: 'inherit', env: context.env, cwd: context.cwd });
+    const result = await defaultSpawn(real.bin, args, { stdio: 'inherit', env: context.env, cwd: context.cwd });
     return result?.status ?? 1;
   }
   const code = await plugin.descriptor.run(args, {
@@ -416,24 +460,26 @@ async function runHook(argv, commandArgs, options, context) {
     stdout: context.stdout,
     stderr: context.stderr,
     realBin: real.bin,
-    spawn,
+    spawn: defaultSpawn,
     attribution: attributionApi(context, resolved.model, config),
   });
   return code ?? 0;
 }
 
 /**
- * @param {string[]} words
- * @param {{model?: string, modelBase64?: string, harness?: string}} options
- * @param {object} context
- * @returns {Promise<number>}
+ * Prints a shell command with plugin executables rewritten.
+ *
+ * Pi and OpenCode call this before a bash tool runs. The output is one line. The command is not executed.
+ *
+ * @param {string[]} words Shell words, or one shell string when `--shell` is used. Commander leaves the text in this list.
+ * @param {object} options Parsed rewrite flags.
+ * @param {string} [options.model] Plain model name placed in the rewrite prefix.
+ * @param {string} [options.modelBase64] Base64url model name.
+ * @param {string} [options.harness] Harness id used as the model fallback.
+ * @param {object} context Runtime context. `stdout` receives the rewritten command. `stderr` receives errors.
+ * @returns {Promise<number>} `0` when the rewritten command was printed. `1` when plugins cannot be loaded. `2` for a usage or model error.
  */
 async function runRewrite(words, options, context) {
-  /** @type {{model?: string, modelBase64?: string, harness?: string}} */
-  const present = {};
-  if (options.model !== undefined) present.model = options.model;
-  if (options.modelBase64 !== undefined) present.modelBase64 = options.modelBase64;
-  if (options.harness !== undefined) present.harness = options.harness;
   const command = words.join(' ');
   if (!command.trim()) {
     report(context.stderr, new CosplayError({
@@ -443,7 +489,7 @@ async function runRewrite(words, options, context) {
     }).message);
     return 2;
   }
-  const resolved = resolveCliModel(present, context.env);
+  const resolved = resolveCliModel(options, context.env);
   if (resolved.error) {
     report(context.stderr, resolved.error);
     return 2;
@@ -466,16 +512,24 @@ async function runRewrite(words, options, context) {
 }
 
 /**
- * @param {string[]} values
- * @returns {string[]}
+ * Splits repeated harness flags into individual ids.
+ *
+ * A single `--harness a,b` and two `--harness` options both become a list of ids.
+ *
+ * @param {string[]} values Flag values collected by Commander. Each value may contain comma-separated ids.
+ * @returns {string[]} Trimmed ids. Empty pieces are omitted.
  */
 function flagList(values) {
   return values.flatMap((item) => item.split(',')).map((item) => item.trim()).filter(Boolean);
 }
 
 /**
- * @param {Record<string, string | string[] | boolean | undefined>} values
- * @returns {string[]}
+ * Returns the harness ids that install or uninstall should touch.
+ *
+ * `--harness` and `--agent` are combined. Repeated ids are kept once, in first-seen order. No ids means every supported harness.
+ *
+ * @param {Record<string, string | string[] | boolean | undefined>} values Parsed install or uninstall options. `harness` and `agent` are the id lists.
+ * @returns {string[]} Harness ids to process.
  */
 function selectedHarnesses(values) {
   const ids = [...flagList(values.harness || []), ...flagList(values.agent || [])];
@@ -492,8 +546,12 @@ function selectedHarnesses(values) {
 }
 
 /**
- * @param {string} directory
- * @returns {boolean}
+ * Reports whether a path is an existing directory.
+ *
+ * Doctor rejects `--project-dir` when the path is missing or is not a directory, before it looks for hook files.
+ *
+ * @param {string} directory Path from `--project-dir`.
+ * @returns {boolean} True when `stat` says the path is a directory. False when it is missing or is not a directory.
  */
 function isDirectory(directory) {
   try {
@@ -504,10 +562,18 @@ function isDirectory(directory) {
 }
 
 /**
- * @param {{harness?: string[], agent?: string[], projectDir?: string, bin?: string}} options
- * @param {object} context
- * @param {boolean} remove
- * @returns {Promise<number>}
+ * Installs or removes harness hooks and prints one line per harness.
+ *
+ * An unknown harness id stops the command before any file is written. After a successful install, each harness can print an approval note.
+ *
+ * @param {object} options Parsed install or uninstall flags.
+ * @param {string[]} [options.harness] Harness ids from `--harness`.
+ * @param {string[]} [options.agent] Harness ids from `--agent`. Combined with `harness`.
+ * @param {string} [options.projectDir] Project directory. When set, project hooks are edited instead of user hooks.
+ * @param {string} [options.bin] `cosplaying` executable embedded in the hook commands.
+ * @param {object} context Runtime context used to find plugins and hook files.
+ * @param {boolean} remove True for `uninstall`. False for `install`.
+ * @returns {Promise<number>} `0` when every selected harness succeeded. `1` when one or more failed. `2` when a harness id is unknown.
  */
 async function runInstall(options, context, remove) {
   const harnesses = selectedHarnesses(options);
@@ -548,9 +614,16 @@ async function runInstall(options, context, remove) {
 }
 
 /**
- * @param {{repair?: boolean, projectDir?: string, bin?: string}} options
- * @param {object} context
- * @returns {Promise<number>}
+ * Runs doctor after checking that an explicit project directory exists.
+ *
+ * The plugin commands that intercept shell writes are passed in so extension files can be compared with the current command list.
+ *
+ * @param {object} options Parsed doctor flags.
+ * @param {boolean} [options.repair] True when `--repair` was passed. Doctor then rewrites files it can fix.
+ * @param {string} [options.projectDir] Project directory. It must already exist and be a directory.
+ * @param {string} [options.bin] `cosplaying` executable that hook commands should use.
+ * @param {object} context Runtime context. `stderr` receives the usage error for a bad project directory.
+ * @returns {Promise<number>} Doctor's exit code, or `2` when `--project-dir` is not a directory.
  */
 async function runDoctorCommand(options, context) {
   const projectDir = options.projectDir || undefined;
@@ -573,8 +646,12 @@ async function runDoctorCommand(options, context) {
 }
 
 /**
- * @param {object} context
- * @returns {Promise<string[]>}
+ * Lists plugin commands that shell rewrite must wrap.
+ *
+ * A plugin with `intercept: false` is omitted. A load failure returns an empty list so install can still write hooks.
+ *
+ * @param {object} context Runtime context passed to the plugin loader.
+ * @returns {Promise<string[]>} Command names. An empty list when plugins cannot be loaded.
  */
 async function interceptingCommands(context) {
   try {
@@ -586,9 +663,13 @@ async function interceptingCommands(context) {
 }
 
 /**
- * @param {string[]} argv
- * @param {object} context
- * @returns {Promise<number>}
+ * Runs `plugin list`, `install`, `uninstall`, `enable`, or `disable`.
+ *
+ * Enable and disable change the user settings for a shipped plugin. Install and uninstall copy or remove a plugin package. Each successful change regenerates Pi and OpenCode extensions so their command lists match.
+ *
+ * @param {string[]} argv Action and optional source or name. `argv[0]` is the action. `argv[1]` is the plugin source or name.
+ * @param {object} context Runtime context. `stdout` receives the result lines. `stderr` receives usage and failure text.
+ * @returns {Promise<number>} `0` on success. `1` when the action fails. `2` when the action or its argument is missing.
  */
 async function runPlugin(argv, context) {
   const [action, source] = argv;
@@ -678,7 +759,12 @@ async function runPlugin(argv, context) {
 }
 
 /**
- * @param {object} context
+ * Rewrites installed Pi and OpenCode extensions after the plugin list changes.
+ *
+ * User extensions are always updated. A project extension is updated only when that file already exists, so a project that never installed hooks does not gain one.
+ *
+ * @param {object} context Runtime context used to load plugins and find the Git root.
+ * @returns {Promise<void>} No value. Failures from the installer propagate to the caller.
  */
 async function regenerateExtensions(context) {
   const commands = await interceptingCommands(context);

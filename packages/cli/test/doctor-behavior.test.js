@@ -4,16 +4,21 @@ import { chmodSync, existsSync, mkdtempSync, mkdirSync, readFileSync, symlinkSyn
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { fileURLToPath } from 'node:url';
 import { systemEnv, writeSpawnStub } from './spawn-stub.js';
 
 const bin = fileURLToPath(new URL('../bin/cosplaying.js', import.meta.url));
 
 /**
- * @param {string[]} args
- * @param {string} home
- * @param {string} cwd
- * @param {NodeJS.ProcessEnv} [env]
+ * Runs doctor, install, or another CLI command in a temporary home.
+ *
+ * `systemEnv` keeps a Windows spawn able to start. Extra environment values can change `PATH`.
+ *
+ * @param {string[]} args Arguments after the program name.
+ * @param {string} home Temporary home directory.
+ * @param {string} cwd Working directory for the CLI.
+ * @param {NodeJS.ProcessEnv} [env={}] Extra environment variables.
+ * @returns {import('node:child_process').SpawnSyncReturns<string>} The CLI result. `stdout` and `stderr` are strings.
  */
 function run(args, home, cwd, env = {}) {
   return spawnSync(process.execPath, [bin, ...args], {
@@ -31,7 +36,11 @@ function run(args, home, cwd, env = {}) {
 }
 
 /**
- * @returns {{home: string, cwd: string}}
+ * Creates a temporary home and working directory for a doctor test.
+ *
+ * Hook files are written under the home, not under the developer home.
+ *
+ * @returns {{home: string, cwd: string}} Absolute paths of the two directories.
  */
 function isolated() {
   return {
@@ -41,8 +50,13 @@ function isolated() {
 }
 
 /**
- * @param {unknown} value
- * @param {(command: string) => string} visitCommand
+ * Replaces every `command` string in a hook settings value.
+ *
+ * Nested objects and arrays are visited. The test uses this to damage a command and then ask doctor to repair it.
+ *
+ * @param {unknown} value Parsed JSON value, or one nested entry. Command strings on this value are replaced.
+ * @param {(command: string) => string} visitCommand Function that receives one command and returns the replacement.
+ * @returns {void} No value. `value` is updated in place.
  */
 function mapCommands(value, visitCommand) {
   if (!value || typeof value !== 'object') return;
@@ -55,8 +69,12 @@ function mapCommands(value, visitCommand) {
 }
 
 /**
- * @param {unknown} value
- * @returns {string[]}
+ * Lists every `command` string in a hook settings value.
+ *
+ * The settings object is not changed. The same walk as {@link mapCommands} collects the strings.
+ *
+ * @param {unknown} value Parsed hook settings, or one nested entry.
+ * @returns {string[]} Command strings in visit order.
  */
 function commandStrings(value) {
   /** @type {string[]} */
@@ -159,27 +177,6 @@ test('PATH cosplaying with a different version is a finding', () => {
   assert.doesNotMatch(recorded, /--help/);
 });
 
-test('doctor with no findings names the managed installs', () => {
-  const { home, cwd } = isolated();
-  const installed = run(['install'], home, cwd);
-  assert.equal(installed.status, 0, installed.stderr);
-  const doctor = run(['doctor'], home, cwd);
-  assert.equal(doctor.status, 0, doctor.stderr);
-  assert.match(doctor.stdout, /cosplaying doctor: no findings \(6 managed installs checked\)/);
-});
-
-test('doctor does not claim Codex, Claude Code, or Gemini hooks are approved', () => {
-  const { home, cwd } = isolated();
-  const installed = run(['install'], home, cwd);
-  assert.equal(installed.status, 0, installed.stderr);
-  const doctor = run(['doctor'], home, cwd);
-  assert.equal(doctor.status, 0, doctor.stderr);
-  const output = `${doctor.stdout}${doctor.stderr}`;
-  assert.equal(output.includes('Codex, Claude Code, or Gemini hooks are approved'), false, output);
-  assert.equal(output.includes('hook is trusted'), false, output);
-  assert.equal(output.includes('approved'), false, output);
-});
-
 test('--project-dir must be a directory', () => {
   const { home, cwd } = isolated();
   const missing = path.join(cwd, 'no-such-dir');
@@ -210,46 +207,6 @@ test('doctor probes a hook whose executable is this cosplaying bin', {
   const doctor = run(['doctor', '--bin', bin], home, cwd, { PATH: pathEnv });
   assert.equal(doctor.status, 0, doctor.stderr);
   assert.match(doctor.stdout, /cosplaying doctor: no findings \(6 managed installs checked\)/);
-});
-
-test('Pi and OpenCode block a wrapped command when rewrite cannot start', async () => {
-  const { home, cwd } = isolated();
-  const notify = fileURLToPath(new URL('../../../examples/notify', import.meta.url));
-  writeFileSync(path.join(cwd, '.cosplaying.json'), JSON.stringify({ plugins: [notify] }));
-  const missing = path.join(home, 'missing-cosplaying');
-  const installed = run(['install', '--harness', 'pi,opencode', '--bin', missing], home, cwd);
-  assert.equal(installed.status, 0, installed.stderr);
-  const piFile = path.join(home, '.pi', 'agent', 'extensions', 'cosplaying.js');
-  const openFile = path.join(home, '.config', 'opencode', 'plugins', 'cosplaying.js');
-  for (const file of [piFile, openFile]) {
-    const text = readFileSync(file, 'utf8');
-    assert.match(text, /^\/\/ cosplaying:/);
-    assert.doesNotMatch(text, /from ['"]cosplaying/);
-    assert.match(text, /COMMANDS = \["notify"\]/);
-  }
-  const pi = await import(pathToFileURL(piFile).href);
-  /** @type {Record<string, Function>} */
-  const handlers = {};
-  pi.default({ on(name, fn) { handlers[name] = fn; } });
-  const blocked = handlers.tool_call(
-    { toolName: 'bash', input: { command: 'sudo -u root notify --list' } },
-    { model: { id: 'Example' } },
-  );
-  assert.equal(blocked.block, true);
-  assert.match(blocked.reason, /cosplaying hook/);
-  assert.equal(handlers.tool_call(
-    { toolName: 'bash', input: { command: 'echo notify' } },
-    { model: { id: 'Example' } },
-  ), undefined);
-  const open = await import(pathToFileURL(openFile).href);
-  const api = await open.Plugin();
-  await assert.rejects(
-    () => api['tool.execute.before']({ tool: 'Shell' }, { args: { command: 'notify --message hi' } }),
-    /cosplaying hook/,
-  );
-  const args = { command: 'echo notify' };
-  await api['tool.execute.before']({ tool: 'bash' }, { args });
-  assert.equal(args.command, 'echo notify');
 });
 
 test('doctor --repair does not rewrite an invalid UTF-8 Pi extension', () => {

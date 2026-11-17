@@ -4,12 +4,17 @@ const SCOPE = 'cosplaying';
 const DOCS = 'github.com/3rd-Eden/cosplay/tree/main/packages';
 
 /**
- * Project error. `scope` and `docs` match this repository.
- * Callers pass `name`, `method`, `message`, and any `args` or `cause`.
+ * Error for a cosplaying failure that the operator or the agent can act on.
+ *
+ * The class sets `scope` to `cosplaying` and `docs` to this repository. Callers put the explanation in `message`. They do not pass `scope` or `docs`.
  */
 export class CosplayError extends LayerError {
   /**
-   * @param {import('@mcp-layer/error').LayerErrorArgs} [options]
+   * Creates an error whose message names the failure, the bad value, and the next action.
+   *
+   * `%s` in `message` is replaced from `args`. The constructor fills `scope` and `docs` when the caller omits them.
+   *
+   * @param {import('@mcp-layer/error').LayerErrorArgs} [options] Error fields. `name` is the package, `method` is the operation, `message` is the template, `args` are the `%s` values, and `cause` is the underlying error.
    */
   constructor(options = {}) {
     super({

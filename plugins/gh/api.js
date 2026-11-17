@@ -28,10 +28,12 @@ const API_VALUE_FLAGS = new Set([
 ]);
 
 /**
- * Determines the HTTP method implied by a gh api argument list.
- * @param {string[]} args - gh api arguments.
- * @returns {string} Explicit uppercase method, or the method inferred from request fields.
- * @private
+ * Returns the HTTP method a `gh api` invocation will use.
+ *
+ * An explicit `-X` or `--method` wins. A request that sends fields or an input file is `POST`. Anything else is `GET`, which this plugin does not rewrite.
+ *
+ * @param {string[]} args Arguments after `gh api`, or the full `gh` argument list. Method flags are searched in the whole list.
+ * @returns {string} Uppercase method name.
  */
 function apiMethod(args) {
   let method;
@@ -43,11 +45,13 @@ function apiMethod(args) {
 }
 
 /**
- * Finds the gh api endpoint while skipping flags that consume values.
- * @param {string[]} args - gh api arguments.
- * @param {{nextIndex: number}} info - Parsed command information containing the endpoint scan start.
- * @returns {{value: string, index: number} | null} Endpoint value and argument index, or null when it cannot be found.
- * @public
+ * Finds the endpoint argument of `gh api`.
+ *
+ * Flags that take a value are skipped, including `--hostname` and `-f`. The first remaining word is the endpoint. `--` ends the search with no endpoint, because the path would be ambiguous.
+ *
+ * @param {string[]} args Full `gh` arguments.
+ * @param {{nextIndex: number}} info Parsed command. `nextIndex` is the first argument after `api`.
+ * @returns {{value: string, index: number} | null} Endpoint text and its index. Null when no endpoint word is present.
  */
 function apiEndpoint(args, info) {
   for (let i = info.nextIndex; i < args.length; i += 1) {
@@ -65,11 +69,13 @@ function apiEndpoint(args, info) {
 }
 
 /**
- * Normalizes a GitHub API endpoint and rejects hosts outside the configured GitHub host.
- * @param {string} endpoint - Relative API path or absolute URL.
- * @param {string} [hostname] - Configured GitHub Enterprise hostname.
- * @returns {string} Normalized API route, or an empty string for an unsupported URL.
- * @private
+ * Reduces a GitHub API endpoint to the route the allowlist matches.
+ *
+ * A relative path has its query and a leading `api/v3/` removed. An absolute URL is accepted only for `https://api.github.com` or the hostname from `--hostname`. Any other URL becomes an empty route so it matches no rule.
+ *
+ * @param {string} endpoint Endpoint argument, either a relative path or an absolute URL.
+ * @param {string} [hostname] GitHub Enterprise hostname from `--hostname`. It is omitted for github.com.
+ * @returns {string} Route without a leading slash. An empty string when an absolute URL is not an accepted host.
  */
 function normalizedApiEndpoint(endpoint, hostname) {
   let value = String(endpoint);
@@ -86,12 +92,14 @@ function normalizedApiEndpoint(endpoint, hostname) {
 }
 
 /**
- * Finds the allowlisted text field for a mutating GitHub API route and method.
- * @param {string} endpoint - API route or absolute endpoint URL.
- * @param {string} method - Uppercase HTTP method.
- * @param {string} [hostname] - Configured GitHub Enterprise hostname.
- * @returns {{pattern: RegExp, methods: string[], fields?: string[], passthroughFields?: string[], trailerFields?: string[], defaultTrailerField?: string, payloadFields?: string[], payloadDisclosureField?: string, emptyReview?: boolean, allowTextless?: boolean, reviewerRequest?: string, identityOnly?: boolean, dismissal?: boolean} | null} Matching write rule, or null when unsupported.
- * @public
+ * Finds the attribution rule for one mutating GitHub API route and method.
+ *
+ * Each rule names the text fields that receive a Markdown byline, the fields that are checked but not rewritten, and the fields that receive a Git trailer. A route with no rule is blocked. The first matching rule wins.
+ *
+ * @param {string} endpoint API route or absolute endpoint URL.
+ * @param {string} method Uppercase HTTP method.
+ * @param {string} [hostname] GitHub Enterprise hostname from `--hostname`.
+ * @returns {object | null} The matching rule. `fields` receive a Markdown byline. `passthroughFields` require a model but are not rewritten. `trailerFields` receive the Git trailer. `identityOnly` checks the model and does not change the body. `reviewerRequest` is `request` or `remove`. Null when no rule matches.
  */
 function apiRule(endpoint, method, hostname) {
   const route = normalizedApiEndpoint(endpoint, hostname);
@@ -185,18 +193,19 @@ function apiRule(endpoint, method, hostname) {
 }
 
 /**
- * Validates a pull request reviewer request without changing its content.
- * @param {string[]} args - Mutable gh api arguments.
- * @param {object} options - Attribution and input-file context.
- * @param {Record<string, string | undefined>} options.env - Environment containing the model identity.
- * @param {string} options.cwd - Working directory for attribution config.
- * @param {string} [options.home] - Home directory for attribution config.
- * @param {string} [options.platform] - Platform for attribution config paths.
- * @param {ReturnType<typeof createTempFiles>} options.tempFiles - Private copy writer for stdin input.
- * @param {function(): string} options.readStdin - Lazy stdin reader.
- * @returns {{args: string[], changed: boolean}} Validated arguments and whether stdin was redirected to a private copy.
- * @throws {CosplayError} If the identity or reviewer payload is missing or invalid.
- * @private
+ * Checks a pull-request reviewer request and leaves its reviewer lists unchanged.
+ *
+ * The request has no prose to attribute. A model is still required so the write is tied to a session. The payload must be reviewer fields or one JSON object with `reviewers` or `team_reviewers`. Stdin JSON is copied to a private file. The reviewer names are not rewritten.
+ *
+ * @param {string[]} args Mutable `gh api` arguments. A stdin `--input` is replaced with a private path.
+ * @param {object} tools Helpers for this check.
+ * @param {object} tools.context Hook context.
+ * @param {{annotateMarkdown: function(string): string}} tools.context.attribution Helper used to prove that a model is available.
+ * @param {{write: function(string, string=): string}} tools.tempFiles Writer used when `--input` is stdin.
+ * @param {function(): string} tools.readStdin Cached stdin reader.
+ * @param {'request' | 'remove'} [tools.operation='request'] `request` adds reviewers. `remove` deletes them. The value only changes the error text.
+ * @returns {{args: string[], changed: boolean}} The same arguments, and true when stdin was copied to a file.
+ * @throws {CosplayError} The model is missing, or the reviewer payload is missing or not a list of non-empty strings.
  */
 function rewriteReviewerRequestArgs(args, { context, tempFiles, readStdin, operation = 'request' }) {
   requireAttribution(context);
@@ -244,16 +253,19 @@ function rewriteReviewerRequestArgs(args, { context, tempFiles, readStdin, opera
 }
 
 /**
- * Annotates one allowlisted text field in a parsed gh api JSON body.
- * @param {Record<string, unknown>} value - Parsed JSON request object; updated in place.
- * @param {{model: string, template: string, link: string | undefined}} config - Current attribution settings.
- * @param {string[]} fields - Text fields that need a Markdown byline.
- * @param {string[]} passthroughFields - Text fields that need an identity check but no byline.
- * @param {string[]} trailerFields - Text fields that need a Git trailer.
- * @param {string} [trailer] - Rendered Git trailer for any matched trailer field.
- * @returns {boolean} Whether an attribution field was changed.
- * @throws {CosplayError} If the JSON body contains unsupported or invalid text fields.
- * @private
+ * Attributes the allowlisted text fields of one `gh api` JSON object.
+ *
+ * Markdown fields receive the byline. Trailer fields receive the Git trailer. A request must not mix those two kinds. Fields that are only passed through are not rewritten. The object is updated in place.
+ *
+ * @param {Record<string, unknown>} value Parsed JSON object.
+ * @param {object} context Hook context.
+ * @param {{annotateMarkdown: function(string): string}} context.attribution Helper that appends the Markdown byline.
+ * @param {string[]} fields Field names that receive a Markdown byline.
+ * @param {string[]} [passthroughFields=[]] Field names that may be present and are not rewritten.
+ * @param {string[]} [trailerFields=[]] Field names that receive the Git trailer.
+ * @param {string} [trailer] Rendered `AI-Assisted-By` line. Required when a trailer field is present.
+ * @returns {boolean} True when a Markdown field or a trailer field was present and rewritten.
+ * @throws {CosplayError} The value is not an object, a text field is not allowlisted, a value is not a string, or Markdown fields and trailer fields are both present.
  */
 function annotateJson(value, context, fields, passthroughFields = [], trailerFields = [], trailer) {
   if (!isRecord(value)) throw ghError('gh api --input must contain one top-level JSON object. Put the endpoint’s supported text field in that object as a string.');
@@ -275,13 +287,16 @@ function annotateJson(value, context, fields, passthroughFields = [], trailerFie
 }
 
 /**
- * Adds the configured byline and checks the code-scanning comment limit.
- * @param {string} value - Original text, preserved in the attributed output.
- * @param {object} config - Validated model and Markdown attribution settings.
- * @param {string} field - REST text field being attributed.
- * @returns {string} Attributed text that fits the endpoint limit.
- * @throws {CosplayError} If the attributed dismissal comment exceeds 280 characters.
- * @private
+ * Appends the Markdown byline and enforces the code-scanning comment limit.
+ *
+ * GitHub stores `dismissed_comment` only up to 280 characters. The text is not truncated. A longer result is refused so the caller can shorten the comment or the template.
+ *
+ * @param {string} value Original field text.
+ * @param {object} context Hook context.
+ * @param {{annotateMarkdown: function(string): string}} context.attribution Helper that appends the Markdown byline.
+ * @param {string} field REST field name. `dismissed_comment` is length-checked. Other fields are not.
+ * @returns {string} Attributed text.
+ * @throws {CosplayError} The attributed `dismissed_comment` is longer than 280 characters, or the byline cannot be rendered.
  */
 function annotateApiText(value, context, field) {
   const output = context.attribution.annotateMarkdown(value);
@@ -292,19 +307,19 @@ function annotateApiText(value, context, field) {
 }
 
 /**
- * Rewrites supported mutating gh api requests to attribute their text payloads.
- * @param {string[]} inputArgs - Original gh api arguments.
- * @param {object} [options] - Parsed command and injected I/O settings.
- * @param {{path: string, nextIndex: number}} options.info - Parsed gh api command information.
- * @param {Record<string, string | undefined>} options.env - Environment variables used for attribution config.
- * @param {string} options.cwd - Working directory used to find project config.
- * @param {string} [options.home] - Home directory override for user config.
- * @param {string} [options.platform] - Platform override for user config paths.
- * @param {ReturnType<typeof createTempFiles>} options.tempFiles - Temporary file manager for rewritten inputs.
- * @param {function(): string} options.readStdin - Cached stdin reader.
- * @returns {{args: string[], changed: boolean}} Prepared arguments and whether a rewrite occurred.
- * @throws {CosplayError} If a mutating request is unsupported or its text cannot be attributed safely.
- * @private
+ * Rewrites a mutating `gh api` request so its text payload includes attribution.
+ *
+ * `GET`, `HEAD`, and `OPTIONS` are returned unchanged. `graphql` is delegated. Markdown rendering and release-note generation are returned unchanged because they do not publish the caller's text. Every other mutating route must match an allowlist rule. Field form and one `--input` file must not be combined. A missing text field is refused unless the rule allows a textless call or supplies a default trailer.
+ *
+ * @param {string[]} inputArgs Original `gh api` arguments. This array is copied before it is edited.
+ * @param {object} [tools]
+ * @param {{path: string, nextIndex: number}} tools.info Parsed `gh` command. `nextIndex` is the first argument after `api`.
+ * @param {object} tools.context Hook context.
+ * @param {{annotateMarkdown: function(string): string, renderTrailer: function(): string}} tools.context.attribution Attribution helpers.
+ * @param {{write: function(string, string=): string}} tools.tempFiles Writer for rewritten JSON and file fields.
+ * @param {function(): string} tools.readStdin Cached stdin reader.
+ * @returns {{args: string[], changed: boolean}} Arguments to spawn, and whether a value was rewritten or a default field was added.
+ * @throws {CosplayError} The route has no rule, or its text cannot be attributed safely.
  */
 export function rewriteApiArgs(inputArgs, { info, context, tempFiles, readStdin } = {}) {
   const args = [...inputArgs];

@@ -11,18 +11,14 @@ import {
 } from './config.js';
 
 /**
- * @param {unknown} config
- * @returns {string[]}
- */
-function pluginList(config) {
-  if (!config || typeof config !== 'object' || Array.isArray(config)) return [];
-  const plugins = /** @type {{ plugins?: string[] }} */ (config).plugins;
-  return plugins ?? [];
-}
-
-/**
- * @param {string} name
- * @param {Record<string, string>} shipped
+ * Stops enable and disable when the name is not a plugin that ships in this package.
+ *
+ * Only shipped plugins are toggled in the settings file. Other plugins are installed and removed with `plugin install` and `plugin uninstall`.
+ *
+ * @param {string} name Plugin name from the command line.
+ * @param {Record<string, string>} shipped Map of shipped plugin name to directory.
+ * @returns {void} No value when `name` is shipped.
+ * @throws {CosplayError} `name` is not `git` or `gh`.
  */
 function assertShipped(name, shipped) {
   if (shipped[name]) return;
@@ -35,16 +31,13 @@ function assertShipped(name, shipped) {
 }
 
 /**
- * @param {string} file
- * @param {Record<string, unknown>} data
- */
-function writeConfig(file, data) {
-  writeJsonAtomic(file, data);
-}
-
-/**
- * @param {{home?: string}} context
- * @returns {{ file: string, data: Record<string, unknown> }}
+ * Loads the user settings that `plugin enable` and `plugin disable` edit.
+ *
+ * A missing file is an empty object. The caller writes that object to the default settings path.
+ *
+ * @param {object} context Runtime context.
+ * @param {string} [context.home] Home directory used to find `~/.config/cosplaying`.
+ * @returns {{file: string, data: Record<string, unknown>}} Path of the user settings file and a copy of its contents.
  */
 function userSettings(context) {
   const directory = userConfigDirectory(context);
@@ -56,9 +49,16 @@ function userSettings(context) {
 }
 
 /**
- * @param {string} name
- * @param {object} context
- * @returns {Promise<{ok: true, name: string, directory: string} | {ok: false, status: number, error: string}>}
+ * Turns on a shipped plugin in the user settings file.
+ *
+ * The command does not copy the plugin. It appends the name to `plugins` when the name is absent. A project settings list that omits the name blocks the change, because that list replaces the user list.
+ *
+ * @param {string} name Shipped plugin name, `git` or `gh`.
+ * @param {object} context Runtime context.
+ * @param {string} [context.cwd] Directory used to find project settings.
+ * @param {string} [context.home] Home directory used to find user settings.
+ * @param {NodeJS.ProcessEnv} [context.env] Environment used to list installed plugins.
+ * @returns {Promise<{ok: true, name: string, directory: string} | {ok: false, status: number, error: string}>} Success includes the shipped directory. Failure includes exit status `1` and the error text.
  */
 export async function enableBundledPlugin(name, context) {
   try {
@@ -76,7 +76,7 @@ export async function enableBundledPlugin(name, context) {
     }
     const project = findProjectConfig(context);
     const projectPlugins = project?.config?.plugins;
-    if (Array.isArray(projectPlugins) && !projectPlugins.includes(name)) {
+    if (projectPlugins && !projectPlugins.includes(name)) {
       throw new CosplayError({
         name: 'cli',
         method: 'plugin',
@@ -85,10 +85,10 @@ export async function enableBundledPlugin(name, context) {
       });
     }
     const { file, data } = userSettings(context);
-    const plugins = pluginList(data);
+    const plugins = data.plugins ?? [];
     if (!plugins.includes(name)) {
       data.plugins = [...plugins, name];
-      writeConfig(file, data);
+      writeJsonAtomic(file, data);
     }
     return { ok: true, name, directory: shipped[name] };
   } catch (error) {
@@ -107,22 +107,27 @@ export async function enableBundledPlugin(name, context) {
 }
 
 /**
- * @param {string} name
- * @param {object} context
- * @returns {Promise<{ok: true, name: string} | {ok: false, status: number, error: string}>}
+ * Turns off a shipped plugin in the user settings file.
+ *
+ * The name is removed from the user `plugins` list. A project settings list that still names the plugin is left unchanged and reported, because that list replaces the user list.
+ *
+ * @param {string} name Shipped plugin name, `git` or `gh`.
+ * @param {object} context Runtime context.
+ * @param {string} [context.cwd] Directory used to find project settings.
+ * @param {string} [context.home] Home directory used to find user settings.
+ * @returns {Promise<{ok: true, name: string} | {ok: false, status: number, error: string}>} Success names the plugin. Failure includes exit status `1` and the error text.
  */
 export async function disableBundledPlugin(name, context) {
   try {
     assertShipped(name, bundledPlugins());
-    const directory = userConfigDirectory(context);
     const found = findUserConfig(context);
-    if (found && pluginList(found.config).includes(name)) {
+    if (found?.config?.plugins?.includes(name)) {
       const data = { ...found.config };
-      data.plugins = pluginList(data).filter((entry) => entry !== name);
-      writeConfig(found.filepath, data);
+      data.plugins = data.plugins.filter((entry) => entry !== name);
+      writeJsonAtomic(found.filepath, data);
     }
     const project = findProjectConfig(context);
-    if (project && pluginList(project.config).includes(name)) {
+    if (project?.config?.plugins?.includes(name)) {
       throw new CosplayError({
         name: 'cli',
         method: 'plugin',

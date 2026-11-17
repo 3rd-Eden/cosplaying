@@ -1,28 +1,29 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { parse } from 'unbash';
 import { fileURLToPath } from 'node:url';
-import { systemEnv, writeSpawnStub } from './spawn-stub.js';
 
 const bin = fileURLToPath(new URL('../bin/cosplaying.js', import.meta.url));
-const notify = fileURLToPath(new URL('../../../examples/notify', import.meta.url));
 
 /**
- * @param {string[]} args
- * @param {string} home
- * @param {string} cwd
- * @param {NodeJS.ProcessEnv} [env]
+ * Runs the CLI with a temporary home and a fixed `PATH`.
+ *
+ * Extra environment values are added after the defaults, so a test can set a plugin override.
+ *
+ * @param {string[]} args Arguments after the program name.
+ * @param {string} home Temporary home directory. It is both `HOME` and `USERPROFILE`.
+ * @param {string} cwd Working directory for the CLI.
+ * @param {NodeJS.ProcessEnv} [env={}] Extra environment variables. They replace defaults of the same name.
+ * @returns {import('node:child_process').SpawnSyncReturns<string>} The CLI result. `stdout` and `stderr` are strings.
  */
 function run(args, home, cwd, env = {}) {
   return spawnSync(process.execPath, [bin, ...args], {
     cwd,
     encoding: 'utf8',
     env: {
-      ...systemEnv(),
       HOME: home,
       USERPROFILE: home,
       PATH: '/usr/bin:/bin',
@@ -32,26 +33,27 @@ function run(args, home, cwd, env = {}) {
   });
 }
 
-test('the hook prefix puts --model-base64 after hook and main accepts that argv', () => {
+test('the emitted hook command runs with its model and arguments', (t) => {
   const home = mkdtempSync(path.join(tmpdir(), 'cosplaying-prefix-home-'));
   const cwd = mkdtempSync(path.join(tmpdir(), 'cosplaying-prefix-cwd-'));
-  const stub = writeSpawnStub(path.join(home, 'notify'), '#!/bin/sh\nprintf "%s\\n" "$@"\n');
-  writeFileSync(path.join(cwd, '.cosplaying.json'), JSON.stringify({ plugins: [notify] }));
-  const env = { COSPLAYING_NOTIFY_BIN: stub };
-  const rewritten = run(['rewrite', '--model', 'Example Model', '--', 'notify --list'], home, cwd, env);
+  t.after(() => {
+    rmSync(home, { recursive: true, force: true });
+    rmSync(cwd, { recursive: true, force: true });
+  });
+  const plugin = path.join(cwd, 'byline');
+  mkdirSync(plugin);
+  writeFileSync(path.join(plugin, 'package.json'), JSON.stringify({ name: 'byline', version: '1.0.0', type: 'module', main: './index.js' }));
+  writeFileSync(path.join(plugin, 'index.js'), 'export default function run(args, context) { context.stdout.write(JSON.stringify({ args, model: context.model })); return 0; }\n');
+  writeFileSync(path.join(cwd, '.cosplaying.json'), JSON.stringify({ plugins: [plugin] }));
+  const env = { COSPLAYING_BYLINE_BIN: path.join(plugin, 'index.js') };
+  const rewritten = run(['rewrite', '--model', 'Example Model', '--', 'byline --list'], home, cwd, env);
   assert.equal(rewritten.status, 0, rewritten.stderr);
-  const text = rewritten.stdout.trim();
-  assert.match(text, /hook --model-base64 \S+ -- notify --list$/);
-  assert.doesNotMatch(text, /--model-base64 \S+ hook --/);
-
-  const tree = parse(text);
-  const command = tree.commands[0].command;
-  const words = [command.name, ...(command.suffix || [])].map((word) => word.value);
-  assert.equal(words[2], 'hook');
-  assert.equal(words[3], '--model-base64');
-  const executed = run(words.slice(2), home, cwd, env);
-  assert.notEqual(executed.status, 2, executed.stderr);
-  assert.doesNotMatch(executed.stderr, /unknown command --model-base64/);
+  assert.equal(rewritten.stderr, '');
+  const executed = spawnSync(rewritten.stdout.trim(), {
+    shell: true, cwd, encoding: 'utf8',
+    env: { HOME: home, USERPROFILE: home, ...(process.env.SystemRoot ? { SystemRoot: process.env.SystemRoot } : {}), ...env },
+  });
   assert.equal(executed.status, 0, executed.stderr);
-  assert.match(executed.stdout, /--list/);
+  assert.equal(executed.stderr, '');
+  assert.deepEqual(JSON.parse(executed.stdout), { args: ['--list'], model: 'Example Model' });
 });

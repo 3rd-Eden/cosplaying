@@ -20,8 +20,12 @@ export const adapters = [
 ];
 
 /**
- * @param {string} id
- * @returns {import('./harness.js').Harness | undefined}
+ * Returns the harness adapter for one id.
+ *
+ * Install, doctor, and the agent hook use this to select Claude Code, Codex, Cursor, Gemini CLI, OpenCode, or Pi.
+ *
+ * @param {string} id Harness id, for example `cursor`.
+ * @returns {import('./harness.js').Harness | undefined} The adapter with that `id`. `undefined` when the id is unknown.
  */
 export function getAdapter(id) {
   return adapters.find((item) => item.id === id);

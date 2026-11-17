@@ -9,7 +9,12 @@ import { fileURLToPath } from 'node:url';
 const bin = fileURLToPath(new URL('../bin/cosplaying.js', import.meta.url));
 
 /**
- * @param {string} home
+ * Builds a Git environment that ignores the developer Git config.
+ *
+ * An empty global and system config file is written under `home`. The author and committer are fixed so trailer checks see a known email.
+ *
+ * @param {string} home Temporary home directory. The blank Git config is written here.
+ * @returns {Record<string, string>} Environment for `git` and for the CLI.
  */
 function gitEnv(home) {
   const blank = path.join(home, 'gitconfig');
@@ -28,9 +33,14 @@ function gitEnv(home) {
 }
 
 /**
- * @param {string[]} args
- * @param {Record<string, string>} env
- * @param {string} cwd
+ * Runs real Git and returns stdout.
+ *
+ * A non-zero status fails the test. The helper is for setup, not for the command under test.
+ *
+ * @param {string[]} args Git arguments, without the `git` word.
+ * @param {Record<string, string>} env Environment from {@link gitEnv}.
+ * @param {string} cwd Repository directory.
+ * @returns {string} Git stdout.
  */
 function git(args, env, cwd) {
   const result = spawnSync('git', args, { cwd, encoding: 'utf8', env });
@@ -39,7 +49,11 @@ function git(args, env, cwd) {
 }
 
 /**
- * @returns {{home: string, repo: string, env: Record<string, string>}}
+ * Creates a temporary Git repository with the git plugin enabled.
+ *
+ * Signing is off. The identity matches {@link gitEnv}. The project settings name the shipped `git` plugin.
+ *
+ * @returns {{home: string, repo: string, env: Record<string, string>}} The temporary home, the repository directory, and the Git environment.
  */
 function repository() {
   const home = mkdtempSync(path.join(tmpdir(), 'cosplaying-home-'));
@@ -54,9 +68,14 @@ function repository() {
 }
 
 /**
- * @param {string[]} args
- * @param {{repo: string, env: Record<string, string>}} fixture
- * @param {Record<string, string>} [extra]
+ * Runs the CLI inside a Git fixture repository.
+ *
+ * Extra environment values can set the model or a command override.
+ *
+ * @param {string[]} args Arguments after the program name.
+ * @param {{repo: string, env: Record<string, string>}} fixture Repository from {@link repository}.
+ * @param {Record<string, string>} [extra={}] Environment values merged over the fixture environment.
+ * @returns {import('node:child_process').SpawnSyncReturns<string>} The CLI result. `stdout` and `stderr` are strings.
  */
 function run(args, fixture, extra = {}) {
   return spawnSync(process.execPath, [bin, ...args], {
@@ -67,9 +86,14 @@ function run(args, fixture, extra = {}) {
 }
 
 /**
- * @param {string} repo
- * @param {Record<string, string>} env
- * @param {string} subject
+ * Creates a commit that has no attribution trailer and points `HEAD` at it.
+ *
+ * The push check should refuse this commit when the local committer matches. The commit is built with `commit-tree` so the git plugin does not add a trailer.
+ *
+ * @param {string} repo Repository directory.
+ * @param {Record<string, string>} env Git environment.
+ * @param {string} subject Commit subject.
+ * @returns {string} Id of the new commit.
  */
 function unattributed(repo, env, subject) {
   const parent = git(['rev-parse', 'HEAD'], env, repo).trim();

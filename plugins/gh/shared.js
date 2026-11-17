@@ -7,11 +7,13 @@ export const API_FIELD_FLAGS = new Set(['-f', '--raw-field', '-F', '--field']);
 export const API_INPUT_FLAGS = new Set(['--input']);
 
 /**
- * Parses gh api field flags and selects fields allowed for an endpoint.
- * @param {string[]} args - gh api arguments.
- * @param {string[]} fields - Allowlisted text field names.
- * @returns {Array<{flag: string, index: number, valueIndex: number, inline: boolean, key: string, field: string, value: string}>} Matching text field occurrences.
- * @private
+ * Finds `gh api` field flags whose key is in an allowlist.
+ *
+ * The key comparison is case-insensitive. The original key is kept so a replacement can write the same spelling. A field without `key=value` is ignored.
+ *
+ * @param {string[]} args Arguments that may contain `-f`, `--raw-field`, `-F`, and `--field`.
+ * @param {string[]} fields Lowercase field names this endpoint is allowed to carry.
+ * @returns {Array<{flag: string, index: number, valueIndex: number, inline: boolean, attached?: boolean, key: string, field: string, value: string}>} Matches. `key` is the text before `=`. `field` is that key in lowercase. `value` is the text after `=`.
  */
 export function apiFieldOccurrences(args, fields) {
   const result = [];
@@ -27,42 +29,51 @@ export function apiFieldOccurrences(args, fields) {
 }
 
 /**
- * @param {string} message
- * @returns {CosplayError}
+ * Builds the error for a GitHub CLI rewrite that cannot attribute the text.
+ *
+ * The message already tells the agent what to change. Callers throw it, and the command is not run.
+ *
+ * @param {string} message Complete error text, including the next action.
+ * @returns {CosplayError} Error with method `gh`.
  */
 export function ghError(message) {
   return new CosplayError({ name: 'cli', method: 'gh', message });
 }
 
 /**
- * Checks whether a value is a non-array object.
- * @param {unknown} value - Value to inspect.
- * @returns {value is Record<string, unknown>} Whether the value is a record.
- * @private
+ * Reports whether a JSON value is a plain object.
+ *
+ * Arrays and null are not records. Request bodies and GraphQL variables must be objects before their fields are attributed.
+ *
+ * @param {unknown} value Parsed JSON value.
+ * @returns {value is Record<string, unknown>} True when `value` is a non-null object and not an array.
  */
 export function isRecord(value) {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 
 /**
- * Resolves the required write identity and validated attribution settings.
- * @param {Record<string, string | undefined>} [env=process.env] - Environment variables used for model and config values.
- * @param {string} [cwd=process.cwd()] - Working directory used to find project config.
- * @param {{env?: Record<string, string | undefined>, cwd?: string, home?: string, platform?: string}} [configPaths] - Additional environment and path overrides for config lookup.
- * @returns {{model: string, template: string, link: string | undefined}} Model identity and attribution settings.
- * @throws {CosplayError} If the model identity is missing or attribution configuration is invalid.
- * @public
+ * Checks that attribution can be rendered before a write that needs it.
+ *
+ * The check calls the Markdown helper with empty text. That throws when the model is missing, the policy link is not an http(s) URL, or the template contains a marker comment. The rendered block is discarded.
+ *
+ * @param {object} context Hook context.
+ * @param {{annotateMarkdown: function(string): string}} context.attribution Helper that appends the Markdown byline.
+ * @returns {void} No value. A usable configuration returns normally.
+ * @throws {CosplayError} The model or the attribution settings cannot produce a byline.
  */
 export function requireAttribution(context) {
   context.attribution.annotateMarkdown('');
 }
 
 /**
- * Finds occurrences of selected flags and records their value positions.
- * @param {string[]} args - Argument list to scan.
- * @param {Iterable<string>} flags - Flag names to match.
- * @returns {Array<{flag: string, index: number, valueIndex: number, inline: boolean, attached?: boolean, value: string | undefined}>} Matching flag occurrences.
- * @private
+ * Finds selected flags and records where their values sit in the argument list.
+ *
+ * `--flag value`, `--flag=value`, and a short flag with an attached value are all recorded. The scan stops at `--`. A separate value is consumed so it is not scanned as another flag.
+ *
+ * @param {string[]} args Argument list. It is not mutated.
+ * @param {Iterable<string>} flags Flag spellings to match, including the leading dashes.
+ * @returns {Array<{flag: string, index: number, valueIndex: number, inline: boolean, attached: boolean, value: string | undefined}>} One record per match. `inline` is true when the value is in the same argument. `attached` is true for a short flag whose value is glued on, such as `-Ffile`. `value` is undefined when a separate value is missing.
  */
 export function flagOccurrences(args, flags) {
   const result = [];
@@ -91,11 +102,13 @@ export function flagOccurrences(args, flags) {
 }
 
 /**
- * Adds one attribution trailer to a merge body, replacing a prior footer value.
- * @param {string} text - Existing merge commit body.
- * @param {string} trailer - Rendered `AI-Assisted-By` trailer.
- * @returns {string} Body with a single final attribution trailer.
- * @private
+ * Appends one `AI-Assisted-By` trailer to a commit message body.
+ *
+ * An existing `AI-Assisted-By` line in the trailer block is removed first, so a repeated merge does not stack trailers. The body text above that block is kept.
+ *
+ * @param {string} text Existing message body. It can be empty.
+ * @param {string} trailer One rendered `AI-Assisted-By` line.
+ * @returns {string} Body, a blank line when the body is non-empty, the trailer, and a trailing newline.
  */
 export function mergeBodyWithTrailer(text, trailer) {
   const lines = String(text).replace(/\r\n?/g, '\n').trimEnd().split('\n');
@@ -108,21 +121,25 @@ export function mergeBodyWithTrailer(text, trailer) {
 }
 
 /**
- * Creates private temporary files and a cleanup function for rewritten inputs.
- * @returns {{write: function(string, string=): string, cleanup: function(): void}} Temporary file writer and cleanup operations.
- * @private
+ * Creates a private directory for rewritten `gh` input and a way to delete it.
+ *
+ * File arguments are copied here so the user's file is not modified. The directory is created on the first write. Cleanup removes the directory and every file in it.
+ *
+ * @returns {{write: (text: string, extension?: string) => string, cleanup: () => void}} `write` stores text and returns the file path. `cleanup` deletes the directory. Cleanup before the first write does nothing.
  */
 export function createTempFiles() {
   let directory;
   const files = [];
   return {
     /**
-     * Writes text to a private temporary file.
-     * @param {string} text - File contents.
-     * @param {string} [extension='.md'] - File extension to preserve for the wrapped CLI.
-     * @returns {string} Path to the written temporary file.
-     * @throws {CosplayError} If the temporary directory or file cannot be created.
-     * @private
+     * Writes text to a new private file in this temporary directory.
+     *
+     * The file mode is `0600`. The extension is kept so `gh` still sees a markdown or JSON name.
+     *
+     * @param {string} text File contents.
+     * @param {string} [extension='.md'] Extension, with or without a leading dot.
+     * @returns {string} Absolute path of the new file.
+     * @throws {CosplayError} The directory or the file cannot be created. The source file was not modified.
      */
     write(text, extension = '.md') {
       try {
@@ -136,10 +153,11 @@ export function createTempFiles() {
       }
     },
     /**
-     * Removes the temporary directory and all files written by this instance.
-     * @returns {void}
-     * @throws {CosplayError} If the temporary directory cannot be removed.
-     * @private
+     * Deletes the temporary directory created by {@link createTempFiles}, including every file written into it.
+     *
+     * A call before the first write does nothing. Removal uses a forced recursive delete.
+     *
+     * @returns {void} No value.
      */
     cleanup() {
       if (directory) fs.rmSync(directory, { recursive: true, force: true });
@@ -148,11 +166,13 @@ export function createTempFiles() {
 }
 
 /**
- * Creates a lazy reader that consumes stdin at most once.
- * @param {string | Buffer | NodeJS.ReadStream} [input=process.stdin] - Stdin source or injected text value.
- * @returns {function(): string} Function returning the cached stdin text.
- * @throws {CosplayError} If stdin cannot be read.
- * @private
+ * Returns a reader that consumes stdin once and then returns the same text.
+ *
+ * Several flags can use `-`. They must all see the same input, and the stream must not be read twice.
+ *
+ * @param {string | Buffer | NodeJS.ReadStream} [input=process.stdin] Text, bytes, or a stream. Tests pass a string. The hook passes the process stdin.
+ * @returns {() => string} Function that returns the stdin text. The first call reads the source. Later calls return the cached text.
+ * @throws {CosplayError} The stream cannot be read. The message tells the caller to pass a file or readable UTF-8 stdin.
  */
 export function stdinReader(input = process.stdin) {
   let read = false;
@@ -171,12 +191,14 @@ export function stdinReader(input = process.stdin) {
 }
 
 /**
- * Replaces the value portion of a previously parsed flag occurrence.
- * @param {string[]} args - Mutable GitHub CLI argument list.
- * @param {{flag: string, index: number, valueIndex: number, inline: boolean}} occurrence - Parsed flag location.
- * @param {string} value - Replacement value.
- * @returns {void}
- * @private
+ * Replaces the value of one flag that {@link flagOccurrences} already located.
+ *
+ * An attached short flag stays attached. An inline `--flag=value` stays inline. A separate value is written at `valueIndex`.
+ *
+ * @param {string[]} args Mutable argument list.
+ * @param {{flag: string, index: number, valueIndex: number, inline: boolean, attached?: boolean}} occurrence Parsed flag location.
+ * @param {string} value New flag value, without the flag name.
+ * @returns {void} No value. `args` is updated in place.
  */
 export function replaceOccurrence(args, occurrence, value) {
   if (occurrence.attached) args[occurrence.index] = `${occurrence.flag}${value}`;
@@ -185,12 +207,14 @@ export function replaceOccurrence(args, occurrence, value) {
 }
 
 /**
- * Reads a text file or consumes the injected stdin reader for a dash path.
- * @param {string} file - Text file path or dash to read stdin.
- * @param {function(): string} readStdin - Cached stdin reader.
- * @returns {{text: string, fromStdin: boolean}} File text and whether it came from stdin.
- * @throws {CosplayError} If the requested file cannot be read.
- * @private
+ * Reads a text file, or stdin when the path is `-`.
+ *
+ * Stdin is reported separately because the wrapped process cannot read it again. The caller copies that text to a private file.
+ *
+ * @param {string} file Path from a file flag, or `-` for stdin.
+ * @param {function(): string} readStdin Cached stdin reader from {@link stdinReader}.
+ * @returns {{text: string, fromStdin: boolean}} The file or stdin text, and whether it came from stdin.
+ * @throws {CosplayError} The path exists as an argument but the file cannot be read.
  */
 export function readTextFile(file, readStdin) {
   if (file === '-') return { text: readStdin(), fromStdin: true };

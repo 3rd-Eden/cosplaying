@@ -7,7 +7,6 @@ import { fileURLToPath } from 'node:url';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
 const directories = [
-  path.join(root, 'examples', 'notify'),
   path.join(root, 'plugins', 'git'),
   path.join(root, 'plugins', 'gh'),
 ];

@@ -9,9 +9,14 @@ import { fileURLToPath } from 'node:url';
 const bin = fileURLToPath(new URL('../bin/cosplaying.js', import.meta.url));
 
 /**
- * @param {string[]} args
- * @param {string} home
- * @param {string} cwd
+ * Runs the CLI with the developer `PATH` so doctor can probe `cosplaying` when it is installed.
+ *
+ * The home is temporary, so Cursor hooks are not written to the developer home.
+ *
+ * @param {string[]} args Arguments after the program name.
+ * @param {string} home Temporary home directory.
+ * @param {string} cwd Working directory for the CLI.
+ * @returns {import('node:child_process').SpawnSyncReturns<string>} The CLI result. `stdout` and `stderr` are strings.
  */
 function run(args, home, cwd) {
   return spawnSync(process.execPath, [bin, ...args], {
@@ -27,11 +32,14 @@ function run(args, home, cwd) {
 }
 
 /**
- * @param {unknown} parsed
+ * Checks that a parsed Cursor hooks file has the two events this install writes.
+ *
+ * `sessionStart` is one command. `preToolUse` matches `Shell` and fails closed. Both commands end with the Cursor ownership marker.
+ *
+ * @param {unknown} parsed Parsed `.cursor/hooks.json`. It must be the object this install writes.
+ * @returns {void} No value. A mismatch throws an assertion error.
  */
 function assertCursorHooks(parsed) {
-  assert.equal(typeof parsed, 'object');
-  assert.ok(parsed);
   const config = /** @type {{ version: number, hooks: Record<string, Array<Record<string, unknown>>> }} */ (parsed);
   assert.deepEqual(Object.keys(config), ['version', 'hooks']);
   assert.equal(config.version, 1);

@@ -68,7 +68,7 @@ Dependencies today: `collapse-white-space`, `commander`, `cosmiconfig`, `find-up
 
 ## Tests
 
-Read `.cursor/skills/integration-tests/SKILL.md` before writing or changing tests.
+Read `.cursor/skills/integration-tests/SKILL.md` and `.cursor/skills/test-audit/SKILL.md` before writing, changing, reviewing, or sweeping tests.
 
 `pnpm test` runs `node --test`. Tests must use a temp home, a temp cwd, and injected env and spawn. Never touch the developer's real home or a real `gh` binary.
 

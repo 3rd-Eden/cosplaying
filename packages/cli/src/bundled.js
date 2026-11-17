@@ -5,8 +5,11 @@ import { fileURLToPath } from 'node:url';
 const root = fileURLToPath(new URL('../../../plugins', import.meta.url));
 
 /**
- * Directories of shipped plugins that are present in this package.
- * @returns {Record<string, string>}
+ * Finds the plugin directories that ship inside this package.
+ *
+ * `plugin enable` loads these directories. A name is included only when that directory contains `package.json`. A missing plugins directory returns an empty map.
+ *
+ * @returns {Record<string, string>} Map of plugin name to absolute directory. The map has no prototype.
  */
 export function bundledPlugins() {
   /** @type {Record<string, string>} */

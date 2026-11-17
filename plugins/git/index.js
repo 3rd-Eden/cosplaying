@@ -32,17 +32,25 @@ const REBASE_NO_WRITE = new Set(['--abort', '--quit', '--show-current-patch', '-
 const REBASE_NONCOMMIT_ACTIONS = new Set(['start', 'finish', 'abort', 'quit', 'reset']);
 
 /**
- * @param {string} message
- * @param {(string | number)[]} [args]
- * @returns {CosplayError}
+ * Builds a Git plugin error whose message names the failure and the next action.
+ *
+ * Callers throw it or return `message` as a block reason. The command is not given a second error type.
+ *
+ * @param {string} message Error template. `%s` is replaced from `args`.
+ * @param {(string | number)[]} [args=[]] Values for each `%s` in `message`.
+ * @returns {CosplayError} Error with method `git`.
  */
 function gitError(message, args = []) {
   return new CosplayError({ name: 'cli', method: 'git', message, args });
 }
 
 /**
- * @param {string[]} args
- * @returns {{command: string, index: number, blockedReason?: string} | {command: null, index: number, blockedReason: string} | null}
+ * Finds the Git subcommand after the global options.
+ *
+ * Attribution applies only to known subcommands. An option this plugin does not recognize is a block reason, because the subcommand might still create a commit. `--` before the subcommand is also a block reason. `--help` and `--version` are not attributed.
+ *
+ * @param {string[]} args Arguments after the `git` executable, including global options.
+ * @returns {{command: string, index: number, blockedReason?: string} | {command: null, index: number, blockedReason: string} | null} The subcommand and the index of its name. A blocked result when the command cannot be classified. Null when the invocation is help, version, or has no subcommand.
  */
 function commandInfo(args) {
   let index = 0;
@@ -73,8 +81,12 @@ function commandInfo(args) {
 }
 
 /**
- * @param {string} trailer
- * @returns {string}
+ * Converts an `AI-Assisted-By` line into the token `git interpret-trailers` accepts.
+ *
+ * The trailer line uses a colon. The token uses `key=value`.
+ *
+ * @param {string} trailer One trailer line, `AI-Assisted-By: <text>`.
+ * @returns {string} `AI-Assisted-By=<text>` with the space after the colon removed.
  */
 function trailerToken(trailer) {
   const separator = trailer.indexOf(':');
@@ -82,16 +94,27 @@ function trailerToken(trailer) {
 }
 
 /**
- * @param {object} context
- * @returns {string}
+ * Renders the trailer that a commit created by this command must carry.
+ *
+ * An empty model or an invalid policy link throws from the attribution helper. The caller turns that into a block reason.
+ *
+ * @param {object} context Hook context passed to the plugin.
+ * @param {{renderTrailer: () => string}} context.attribution Helper that returns one `AI-Assisted-By` line.
+ * @returns {string} One trailer line.
+ * @throws {CosplayError} The model is empty, the link is not an http(s) URL, or the rendered trailer contains a line break.
  */
 function requireTrailer(context) {
   return context.attribution.renderTrailer();
 }
 
 /**
- * @param {string[]} inputArgs
- * @param {object} context
+ * Adds the attribution trailer to a `git commit` command before Git runs.
+ *
+ * Other commit-creating commands are recorded so the commits can be rewritten after Git exits. A command that cannot be classified, or a missing model, is returned as a block reason and is not run. Rebase operations that do not write commits are left unchanged.
+ *
+ * @param {string[]} inputArgs Arguments after the `git` executable.
+ * @param {object} context Hook context. `attribution.renderTrailer` supplies the trailer for `commit`.
+ * @returns {{args: string[], changed: boolean, command: string | null, blockedReason: string | null, trailer?: string}} Arguments to spawn, whether they differ from the input, the subcommand, a block reason when the command must not run, and the trailer when one was rendered.
  */
 function rewriteGitArgs(inputArgs, context) {
   const info = commandInfo(inputArgs);
@@ -120,10 +143,19 @@ function rewriteGitArgs(inputArgs, context) {
 }
 
 /**
- * @param {string} bin
- * @param {string[]} args
- * @param {object} options
- * @returns {string | Buffer | null}
+ * Runs Git and returns its stdout when the command exits 0.
+ *
+ * Inspection commands use this. A spawn error or a non-zero status means the fact could not be read, so the caller refuses to guess.
+ *
+ * @param {string} bin Real `git` executable.
+ * @param {string[]} args Arguments, including any global options that were in front of the subcommand.
+ * @param {object} [options]
+ * @param {string} [options.cwd] Repository working directory.
+ * @param {NodeJS.ProcessEnv} [options.env] Environment passed to Git.
+ * @param {Function} [options.spawn] Spawn function from the hook context.
+ * @param {string | Buffer} [options.input] Stdin for commands such as `interpret-trailers` and `hash-object`.
+ * @param {BufferEncoding | 'buffer'} [options.encoding='utf8'] Stdout encoding. `buffer` keeps raw commit bytes.
+ * @returns {string | Buffer | null} Stdout on success. Null when Git cannot be run or exits non-zero.
  */
 function captureGit(bin, args, { cwd, env, spawn, input, encoding = 'utf8' } = {}) {
   const child = spawn(bin, args, { cwd, env, input, encoding });
@@ -132,20 +164,30 @@ function captureGit(bin, args, { cwd, env, spawn, input, encoding = 'utf8' } = {
 }
 
 /**
- * @param {string} bin
- * @param {string[]} prefix
- * @param {object} options
- * @returns {string | null}
+ * Reads the current `HEAD` commit id.
+ *
+ * The id from before the Git command is compared with the id after it, so only commits that command created are rewritten.
+ *
+ * @param {string} bin Real `git` executable.
+ * @param {string[]} prefix Global Git options that preceded the subcommand. They are repeated so `--git-dir` still applies.
+ * @param {object} options Spawn options passed to {@link captureGit}.
+ * @returns {string | null} Full `HEAD` oid. Null when `HEAD` does not exist or cannot be read.
  */
 function head(bin, prefix, options) {
   return String(captureGit(bin, [...prefix, 'rev-parse', '--verify', 'HEAD'], options) || '').trim() || null;
 }
 
 /**
- * @param {string} bin
- * @param {string} sha
- * @param {string[]} prefix
- * @param {object} options
+ * Reads one commit object as headers and a raw message.
+ *
+ * The message bytes are kept intact so a rewrite can add a trailer without changing the rest of the commit. Non-UTF-8 headers are rejected because the header lines are edited as text.
+ *
+ * @param {string} bin Real `git` executable.
+ * @param {string} sha Commit id to read.
+ * @param {string[]} prefix Global Git options that preceded the subcommand.
+ * @param {object} options Spawn options passed to {@link captureGit}.
+ * @returns {{headers: string[], message: Buffer} | null} Header lines and the raw message body. Null when the object cannot be read or has no header terminator.
+ * @throws {CosplayError} The commit headers are not valid UTF-8.
  */
 function commitObject(bin, sha, prefix, options) {
   const raw = captureGit(bin, [...prefix, 'cat-file', '-p', sha], { ...options, encoding: 'buffer' });
@@ -161,11 +203,15 @@ function commitObject(bin, sha, prefix, options) {
 }
 
 /**
- * @param {string} bin
- * @param {string[]} args
- * @param {number} index
- * @param {object} options
- * @returns {boolean}
+ * Reports whether this `git pull` will rebase instead of merging.
+ *
+ * A rebase creates different commits from a merge, so the commits are found from `FETCH_HEAD` rather than from a merge commit. The command line wins. Otherwise the branch `rebase` setting, then `pull.rebase`, is read.
+ *
+ * @param {string} bin Real `git` executable.
+ * @param {string[]} args Full Git arguments, including global options.
+ * @param {number} index Index of the `pull` word in `args`.
+ * @param {object} options Spawn options passed to {@link captureGit}.
+ * @returns {boolean} True when the pull rebases. False when it merges or the setting is off.
  */
 function pullUsesRebase(bin, args, index, options) {
   let requested;
@@ -187,10 +233,14 @@ function pullUsesRebase(bin, args, index, options) {
 }
 
 /**
- * @param {string} bin
- * @param {string[]} prefix
- * @param {object} options
- * @returns {Array<{sha: string, action: string}> | null}
+ * Reads the `HEAD` reflog from newest to oldest.
+ *
+ * Merge, pull, and rebase identify the commits they created by comparing the reflog from before the command with the reflog after it.
+ *
+ * @param {string} bin Real `git` executable.
+ * @param {string[]} prefix Global Git options that preceded the subcommand.
+ * @param {object} options Spawn options passed to {@link captureGit}.
+ * @returns {Array<{sha: string, action: string}> | null} Newest entries first. Each entry has the commit id and the reflog subject. Null when the reflog cannot be read.
  */
 function reflogEntries(bin, prefix, options) {
   const output = captureGit(bin, [...prefix, 'reflog', '--format=%H%x00%gs', 'HEAD'], options);
@@ -202,9 +252,13 @@ function reflogEntries(bin, prefix, options) {
 }
 
 /**
- * @param {Array<{sha: string, action: string}>} before
- * @param {Array<{sha: string, action: string}>} after
- * @returns {Array<{sha: string, action: string}> | null}
+ * Returns the reflog entries that were added after a Git command.
+ *
+ * The old entries must still be the suffix of the new reflog. A reflog that was truncated or rewritten cannot be compared, so the result is null and the caller does not guess which commits were created.
+ *
+ * @param {Array<{sha: string, action: string}>} before Reflog captured before the command, newest first.
+ * @param {Array<{sha: string, action: string}>} after Reflog captured after the command, newest first.
+ * @returns {Array<{sha: string, action: string}> | null} The new prefix, newest first. Null when `after` is shorter or the old entries are not a suffix.
  */
 function newReflogEntries(before, after) {
   if (after.length < before.length) return null;
@@ -214,13 +268,18 @@ function newReflogEntries(before, after) {
 }
 
 /**
- * @param {string} bin
- * @param {string} sha
- * @param {Map<string, string>} parentMap
- * @param {string} trailer
- * @param {string[]} prefix
- * @param {object} options
- * @returns {string}
+ * Writes a new commit object that has the attribution trailer and rewritten parents.
+ *
+ * A commit that already has the trailer and whose parents did not change is returned as the same id. A signed commit is refused because a new object would invalidate the signature. A non-UTF-8 message encoding is refused.
+ *
+ * @param {string} bin Real `git` executable.
+ * @param {string} sha Commit id to copy.
+ * @param {Map<string, string>} parentMap Map of an original parent id to the attributed id that must replace it.
+ * @param {string} trailer One `AI-Assisted-By` line.
+ * @param {string[]} prefix Global Git options that preceded the subcommand.
+ * @param {object} options Spawn options passed to {@link captureGit}.
+ * @returns {string} Id of the attributed commit. `sha` when no bytes needed to change.
+ * @throws {CosplayError} The commit cannot be read or written, is signed, or uses a non-UTF-8 message encoding.
  */
 function commitWithTrailer(bin, sha, parentMap, trailer, prefix, options) {
   const commit = commitObject(bin, sha, prefix, options);
@@ -255,16 +314,22 @@ function commitWithTrailer(bin, sha, parentMap, trailer, prefix, options) {
 }
 
 /**
- * @param {string} bin
- * @param {string} command
- * @param {string | null} oldHead
- * @param {string | null} newHead
- * @param {string} trailer
- * @param {string[]} prefix
- * @param {object} options
- * @param {string | null} [rangeBase]
- * @param {Array<{sha: string, action: string}> | null} [oldReflog]
- * @param {Array<{sha: string, action: string}> | null} [newReflog]
+ * Adds the attribution trailer to commits a Git command just created, then points `HEAD` at the result.
+ *
+ * `commit`, `cherry-pick`, `revert`, and `am` use the commits reachable from the new `HEAD` and not from the old one. Merge and pull use the new reflog, and a fast-forward is left unchanged. Rebase uses reflog actions that record a commit. `pull --rebase` uses commits reachable from the new `HEAD` and not from `FETCH_HEAD`.
+ *
+ * @param {string} bin Real `git` executable.
+ * @param {string} command Subcommand name. `pull-rebase` selects the fetch-base range.
+ * @param {string | null} oldHead `HEAD` before the command. Null when there was no `HEAD`.
+ * @param {string | null} newHead `HEAD` after the command. A null or unchanged id does nothing, except for rebase.
+ * @param {string} trailer One `AI-Assisted-By` line.
+ * @param {string[]} prefix Global Git options that preceded the subcommand.
+ * @param {object} options Spawn options passed to {@link captureGit}.
+ * @param {string | null} [rangeBase] `FETCH_HEAD` id for `pull --rebase`.
+ * @param {Array<{sha: string, action: string}> | null} [oldReflog] Reflog from before the command.
+ * @param {Array<{sha: string, action: string}> | null} [newReflog] Reflog from after the command.
+ * @returns {void} No value. `HEAD` is updated when a commit object changed.
+ * @throws {CosplayError} The created commits cannot be identified or rewritten, or `HEAD` moved during the update.
  */
 function attributeCreatedCommits(bin, command, oldHead, newHead, trailer, prefix, options, rangeBase, oldReflog, newReflog) {
   if (!newHead || (newHead === oldHead && command !== 'rebase')) return;
@@ -323,15 +388,25 @@ function attributeCreatedCommits(bin, command, oldHead, newHead, trailer, prefix
 }
 
 /**
- * @param {string} bin
- * @param {string[]} args
- * @param {{command: string, index: number}} info
- * @param {object} options
- * @returns {Array<{sha: string, email: string, trailer: string, subject: string}> | CosplayError | null}
+ * Lists the commits a `git push` would send to the destination.
+ *
+ * Dry-run and delete pushes send no commits. A push that can send more than one ref, a wildcard, a negative refspec, or `push.default=matching` is an error because each destination cannot be checked. A commit list that cannot be read is null so the push is blocked instead of allowed.
+ *
+ * @param {string} bin Real `git` executable.
+ * @param {string[]} args Full Git arguments, including global options.
+ * @param {{command: string, index: number}} info Parsed `push` command. `index` is the `push` word.
+ * @param {object} options Spawn options passed to {@link captureGit}.
+ * @returns {Array<{sha: string, email: string, trailer: string, subject: string}> | CosplayError | null} Outgoing commits. An error when the destinations are ambiguous. Null when the remote or the commit list cannot be read.
  */
 function outgoingCommits(bin, args, info, options) {
   const prefix = args.slice(0, info.index);
   const format = '--format=%H%x00%ce%x00%(trailers:key=AI-Assisted-By,valueonly,separator=%x1e)%x00%s';
+  /**
+   * Lists commits selected by a `git log` range, with the committer email and the attribution trailer.
+   *
+   * @param {string[]} range Revision arguments passed to `git log`, for example a source and `--not` tips.
+   * @returns {Array<{sha: string, email: string, trailer: string, subject: string}> | null} One record per commit. Null when `git log` cannot be run.
+   */
   const branchCommits = (range) => {
     const output = captureGit(bin, [...prefix, 'log', format, ...range], options);
     if (output === null) return null;
@@ -370,11 +445,26 @@ function outgoingCommits(bin, args, info, options) {
     positional.push(arg);
   }
   const equalsRemote = tail.find((arg) => arg.startsWith('--repo='))?.slice('--repo='.length);
+  /**
+   * Reports whether a positional push argument is a refspec rather than a remote name.
+   *
+   * The first positional word is the remote only when it does not look like a refspec.
+   *
+   * @param {string} value Positional argument after `git push`.
+   * @returns {boolean} True when the value contains `:`, starts with `+` or `^`, or is `HEAD`.
+   */
   const looksLikeRefspec = (value) => value.includes(':') || value.startsWith('+') || value.startsWith('^') || value === 'HEAD';
   const positionalHasRemote = !optionRemote && !equalsRemote && positional.length > 0 && !looksLikeRefspec(positional[0]);
   const explicitRemote = equalsRemote || optionRemote || (positionalHasRemote ? positional[0] : undefined);
   const remote = explicitRemote || String(branchPushRemote || defaultPushRemote || upstreamRemote || 'origin').trim();
   const refspecs = optionRemote || equalsRemote ? positional : positionalHasRemote ? positional.slice(1) : positional;
+  /**
+   * Lists the push URLs for the selected remote.
+   *
+   * A name that is not a configured remote is used as a URL. A configured remote can have more than one push URL, and each URL is checked.
+   *
+   * @returns {string[] | null} Push URLs. Null when the remote list or the push URLs cannot be read.
+   */
   const pushTargets = () => {
     const remotes = captureGit(bin, [...prefix, 'remote'], options);
     if (remotes === null) return null;
@@ -384,6 +474,15 @@ function outgoingCommits(bin, args, info, options) {
     const targets = String(output).trim().split(/\r?\n/).filter(Boolean);
     return targets.length ? targets : null;
   };
+  /**
+   * Lists commits that `source` would send to `destination` on every push URL.
+   *
+   * Tips that this repository already has are excluded. A destination that cannot be queried fails the whole lookup.
+   *
+   * @param {string} source Local revision, such as `HEAD` or a branch name.
+   * @param {string} destination Destination ref, such as `refs/heads/main`.
+   * @returns {Array<{sha: string, email: string, trailer: string, subject: string}> | null} Commits that are not already on every reachable tip. Null when a remote query fails or `destination` is empty.
+   */
   const commitsFor = (source, destination) => {
     if (!destination) return null;
     const targets = pushTargets();
@@ -403,6 +502,15 @@ function outgoingCommits(bin, args, info, options) {
     }
     return [...commits.values()];
   };
+  /**
+   * Turns a refspec destination into a full ref name.
+   *
+   * A destination that already starts with `refs/` is kept. A short name is expanded from the source namespace, so a branch stays a branch and a tag stays a tag.
+   *
+   * @param {string} source Source side of the refspec.
+   * @param {string | undefined} destination Destination side. Undefined means the destination is the same ref as the source.
+   * @returns {string | null} Full destination ref. Null when the source ref cannot be resolved or its namespace is not a branch or a tag.
+   */
   const destinationFor = (source, destination) => {
     if (destination?.startsWith('refs/')) return destination;
     const sourceRef = String(captureGit(bin, [...prefix, 'rev-parse', '--symbolic-full-name', source], options) || '').trim();
@@ -412,6 +520,14 @@ function outgoingCommits(bin, args, info, options) {
     if (sourceRef.startsWith('refs/tags/')) return `refs/tags/${destination}`;
     return null;
   };
+  /**
+   * Lists the commits that an explicit list of refspecs would send.
+   *
+   * A matching refspec, a negative refspec, a wildcard, or a destination that cannot be resolved is an error. Those forms can send refs this check would miss.
+   *
+   * @param {string[]} specs Refspecs from the command line or from `remote.<name>.push`.
+   * @returns {Array<{sha: string, email: string, trailer: string, subject: string}> | CosplayError | null} Combined commits. An error for an ambiguous refspec. Null when a commit list cannot be read.
+   */
   const inspectRefspecs = (specs) => {
     const commits = new Map();
     for (const refspec of specs) {
@@ -472,12 +588,16 @@ function outgoingCommits(bin, args, info, options) {
 }
 
 /**
- * @param {string} bin
- * @param {string[]} args
- * @param {{command: string, index: number}} info
- * @param {object} context
- * @param {object} options
- * @returns {string | null}
+ * Returns the reason a push must not run, or null when the push may run.
+ *
+ * A push is blocked when a commit that this repository's committer authored has no `AI-Assisted-By` trailer. Commits by other authors are not blocked. No model means this push is not an attributed session, so it is not blocked here.
+ *
+ * @param {string} bin Real `git` executable.
+ * @param {string[]} args Full Git arguments.
+ * @param {{command: string, index: number}} info Parsed `push` command.
+ * @param {object} context Hook context. `model` selects whether the check applies.
+ * @param {object} options Spawn options passed to {@link captureGit}.
+ * @returns {string | null} Block reason for stderr. Null when the push may run.
  */
 function pushBlockReason(bin, args, info, context, options) {
   if (!context.model) return null;
@@ -495,17 +615,20 @@ function pushBlockReason(bin, args, info, context, options) {
 }
 
 /**
- * @param {{status?: number | null}} result
- * @returns {number}
- */
-function exitCode(result) {
-  return typeof result?.status === 'number' ? result.status : 1;
-}
-
-/**
- * @param {string[]} args
- * @param {object} context
- * @returns {Promise<number>}
+ * Runs Git after adding attribution to commits this command creates.
+ *
+ * `commit` receives the trailer on its command line. Merge, pull, cherry-pick, revert, am, and rebase are attributed after Git exits, using the commits those commands created. `push` is refused when an outgoing commit from the local committer has no trailer. The real Git executable is `context.realBin`.
+ *
+ * @param {string[]} args Arguments after `git`.
+ * @param {object} context Hook context.
+ * @param {string} context.model Model name. An empty model blocks a commit that needs a trailer and skips the push check.
+ * @param {string} context.cwd Repository working directory.
+ * @param {NodeJS.ProcessEnv} context.env Environment passed to Git.
+ * @param {NodeJS.WritableStream} context.stderr Stream that receives a block reason.
+ * @param {string} context.realBin Absolute path of the real `git` executable.
+ * @param {Function} context.spawn Spawn function. It returns a `{ status }` result.
+ * @param {{renderTrailer: () => string}} context.attribution Helper that builds the trailer.
+ * @returns {Promise<number>} Git's exit status. `2` when the command is blocked before Git runs. The Git status, or `2` when it is missing, when attribution repair fails after Git exits.
  */
 export default async function run(args, context) {
   const prepared = rewriteGitArgs(args, context);
@@ -540,8 +663,8 @@ export default async function run(args, context) {
     env: context.env,
     stdio: 'inherit',
   }));
-  if (child?.error) return child.status ?? 127;
-  const status = exitCode(child);
+  if (child.error) return child.status ?? 127;
+  const status = child.status ?? 1;
   if (tracksCreatedCommits) {
     const after = head(bin, prefix, options);
     if (after === null && (status === 0 || before !== null)) {

@@ -6,14 +6,20 @@ import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { systemEnv } from './spawn-stub.js';
+import { writeSamplePlugin } from './sample-plugin.js';
 
 const bin = fileURLToPath(new URL('../bin/cosplaying.js', import.meta.url));
-const notify = fileURLToPath(new URL('../../../examples/notify', import.meta.url));
+const byline = writeSamplePlugin(mkdtempSync(path.join(tmpdir(), 'cosplaying-byline-')));
 const onWindows = process.platform === 'win32';
 
 /**
- * @param {string} home
- * @param {NodeJS.ProcessEnv} [extra]
+ * Builds the environment for a Windows hook-quoting test.
+ *
+ * The temporary directory is the home and the temp directory. `systemEnv` supplies `SystemRoot` when Windows needs it to start a process.
+ *
+ * @param {string} home Temporary directory used as home, profile, and temp.
+ * @param {NodeJS.ProcessEnv} [extra={}] Values that replace the defaults, including `PATH`.
+ * @returns {NodeJS.ProcessEnv} Environment for one CLI spawn.
  */
 function envFor(home, extra = {}) {
   return {
@@ -27,7 +33,11 @@ function envFor(home, extra = {}) {
 }
 
 /**
- * @returns {{home: string, cwd: string}}
+ * Creates a temporary home and a temporary working directory.
+ *
+ * The test uses them so install does not write the developer hook files.
+ *
+ * @returns {{home: string, cwd: string}} Absolute paths of the two directories.
  */
 function isolated() {
   return {
@@ -37,10 +47,13 @@ function isolated() {
 }
 
 /**
- * @param {string[]} args
- * @param {string} home
- * @param {string} cwd
- * @param {NodeJS.ProcessEnv} [extra]
+ * Runs the CLI with the Windows test environment.
+ *
+ * @param {string[]} args Arguments after the program name.
+ * @param {string} home Temporary home passed to {@link envFor}.
+ * @param {string} cwd Working directory for the CLI.
+ * @param {NodeJS.ProcessEnv} [extra] Extra environment values, such as an empty `PATH`.
+ * @returns {import('node:child_process').SpawnSyncReturns<string>} The CLI result. `stdout` and `stderr` are strings.
  */
 function run(args, home, cwd, extra) {
   return spawnSync(process.execPath, [bin, ...args], {
@@ -51,16 +64,25 @@ function run(args, home, cwd, extra) {
 }
 
 /**
- * @param {string} value
- * @returns {string}
+ * Escapes a path so it can be placed in a regular expression.
+ *
+ * Hook commands contain the Node executable path. The test matches that path as literal text.
+ *
+ * @param {string} value Text to escape, usually an absolute path.
+ * @returns {string} `value` with regular-expression metacharacters escaped.
  */
 function escapeRegExp(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 /**
- * @param {unknown} value
- * @param {string[]} commands
+ * Appends every `command` string found in a hook settings value.
+ *
+ * Nested objects and arrays are searched. The test uses the list to check Windows quoting.
+ *
+ * @param {unknown} value Parsed JSON value, or one nested entry.
+ * @param {string[]} commands Destination list. Each `command` string is appended.
+ * @returns {void} No value. `commands` is updated in place.
  */
 function collectCommands(value, commands) {
   if (!value || typeof value !== 'object') return;
@@ -91,7 +113,7 @@ test('install writes double-quoted hook commands and doubles embedded quotes', {
     }
 
     const binPath = 'C:\\Program Files\\cos"playing.cmd';
-    const quoted = `"${binPath.replaceAll('"', '""')}"`;
+    const quoted = '"C:\\Program Files\\cos""playing.cmd"';
     const custom = run(['install', '-H', 'codex', '--bin', binPath], home, cwd, { PATH: '' });
     assert.equal(custom.status, 0, custom.stderr);
     const text = readFileSync(file, 'utf8');
@@ -116,31 +138,27 @@ test('executable lookup uses PATHEXT to find a .cmd on PATH', {
   const binDir = path.join(cwd, 'bin');
   try {
     mkdirSync(binDir);
-    writeFileSync(path.join(binDir, 'notify.cmd'), '@echo off\r\necho FOUND:%~f0\r\n');
-    writeFileSync(path.join(cwd, '.cosplaying.json'), JSON.stringify({ plugins: [notify] }));
+    writeFileSync(path.join(binDir, 'byline.cmd'), '@echo off\r\necho FOUND:%~f0\r\n');
+    writeFileSync(path.join(cwd, '.cosplaying.json'), JSON.stringify({ plugins: [byline] }));
 
-    const missed = run(['hook', '--', 'notify', '--list'], home, cwd, {
+    const missed = run(['hook', '--', 'byline', '--list'], home, cwd, {
       PATH: binDir,
       PATHEXT: '.EXE',
     });
-    assert.match(missed.stderr, /could not find the real notify executable/);
-    assert.doesNotMatch(`${missed.stdout}${missed.stderr}`, /notify\.cmd/i);
+    assert.match(missed.stderr, /could not find the real byline executable/);
+    assert.doesNotMatch(`${missed.stdout}${missed.stderr}`, /byline\.cmd/i);
 
-    const found = run(['hook', '--', 'notify', '--list'], home, cwd, {
+    const found = run(['hook', '--', 'byline', '--list'], home, cwd, {
       PATH: binDir,
       PATHEXT: '.COM;.EXE;.BAT;.CMD',
     });
     const output = `${found.stdout}${found.stderr}`;
-    assert.match(output, /notify\.cmd/i, output);
-    assert.doesNotMatch(output, /could not find the real notify executable/);
+    assert.equal(found.status, 0, output);
+    assert.match(found.stdout, /^FOUND:.*[\\/]byline\.cmd\r?\n$/i);
+    assert.equal(found.stderr, '');
+    assert.doesNotMatch(output, /could not find the real byline executable/);
   } finally {
     rmSync(home, { recursive: true, force: true });
     rmSync(cwd, { recursive: true, force: true });
   }
 });
-
-if (onWindows) {
-  test('Claude SessionStart ignores a chmod failure on the session file', {
-    skip: 'Windows chmod is SetFileAttributes on the session file just written. Denying that access also denies the write, so the failure cannot be forced without a mock. The darwin seatbelt test still covers EPERM.',
-  }, () => {});
-}

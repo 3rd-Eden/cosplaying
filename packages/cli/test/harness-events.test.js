@@ -18,10 +18,19 @@ import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 
+import { writeSamplePlugin } from './sample-plugin.js';
+
 const bin = fileURLToPath(new URL('../bin/cosplaying.js', import.meta.url));
-const notify = fileURLToPath(new URL('../../../examples/notify', import.meta.url));
+const byline = writeSamplePlugin(mkdtempSync(path.join(tmpdir(), 'cosplaying-byline-')));
 const python = '/usr/bin/python3';
 
+/**
+ * Creates a temporary home and working directory for one harness-event test.
+ *
+ * The CLI reads and writes hook files and session files under this home.
+ *
+ * @returns {{home: string, cwd: string}} Absolute paths of the two directories.
+ */
 function isolated() {
   return {
     home: mkdtempSync(path.join(tmpdir(), 'cosplaying-home-')),
@@ -30,15 +39,23 @@ function isolated() {
 }
 
 /**
- * @param {string} home
+ * Builds the environment that keeps the CLI off the developer home and PATH.
+ *
+ * @param {string} home Temporary home directory.
+ * @returns {{HOME: string, USERPROFILE: string, PATH: string}} Environment for one CLI spawn.
  */
 function envFor(home) {
   return { HOME: home, USERPROFILE: home, PATH: '/usr/bin:/bin' };
 }
 
 /**
- * @param {string[]} args
- * @param {{home: string, cwd: string, input?: string}} context
+ * Runs one `agent-hook` or other CLI command and waits for it to exit.
+ *
+ * The hook payload is passed as stdin.
+ *
+ * @param {string[]} args Arguments after the program name.
+ * @param {{home: string, cwd: string, input?: string}} context Temporary paths and optional stdin text.
+ * @returns {import('node:child_process').SpawnSyncReturns<string>} The CLI result. `stdout` and `stderr` are strings.
  */
 function run(args, context) {
   return spawnSync(process.execPath, [bin, ...args], {
@@ -50,8 +67,13 @@ function run(args, context) {
 }
 
 /**
- * @param {string} home
- * @param {string} sessionId
+ * Returns the path of the stored model for one session id.
+ *
+ * The file name is the SHA-256 of the id, matching the CLI. The test can then read or confirm the file without embedding the hash.
+ *
+ * @param {string} home Temporary home directory.
+ * @param {string} sessionId Session id sent in the hook payload.
+ * @returns {string} Absolute path of `<home>/.config/cosplaying/sessions/<hash>.json`.
  */
 function sessionFile(home, sessionId) {
   const hash = createHash('sha256').update(sessionId).digest('hex');
@@ -96,12 +118,12 @@ test('Claude PostModelSwitch stores to_model or model and SessionEnd deletes tha
 
 test('Gemini BeforeTool allows a command, denies a missing command, and SessionStart prints JSON', () => {
   const context = isolated();
-  writeFileSync(path.join(context.cwd, '.cosplaying.json'), JSON.stringify({ plugins: [notify] }));
+  writeFileSync(path.join(context.cwd, '.cosplaying.json'), JSON.stringify({ plugins: [byline] }));
   const allow = run(['agent-hook', 'gemini', 'BeforeTool'], {
     ...context,
     input: JSON.stringify({
       tool_name: 'run_shell_command',
-      tool_input: { command: 'notify --list', cwd: '/work' },
+      tool_input: { command: 'byline --list', cwd: '/work' },
     }),
   });
   assert.equal(allow.status, 0, allow.stderr);
@@ -110,8 +132,8 @@ test('Gemini BeforeTool allows a command, denies a missing command, and SessionS
   assert.equal(allowed.decision, 'allow');
   assert.equal(allowed.hookSpecificOutput.tool_input.cwd, '/work');
   const command = allowed.hookSpecificOutput.tool_input.command;
-  assert.match(command, /hook --model-base64 \S+ -- notify --list$/);
-  assert.notEqual(command, 'notify --list');
+  assert.match(command, /hook --model-base64 \S+ -- byline --list$/);
+  assert.notEqual(command, 'byline --list');
 
   const deny = run(['agent-hook', 'gemini', 'BeforeTool'], {
     ...context,
@@ -136,7 +158,7 @@ test('Gemini BeforeTool allows a command, denies a missing command, and SessionS
   const started = JSON.parse(start.stdout);
   assert.deepEqual(Object.keys(started), ['hookSpecificOutput']);
   assert.match(started.hookSpecificOutput.additionalContext, /Gemini CLI/);
-  assert.match(started.hookSpecificOutput.additionalContext, /notify/);
+  assert.match(started.hookSpecificOutput.additionalContext, /byline/);
   assert.match(started.hookSpecificOutput.additionalContext, /ASD-STE100/);
 });
 
@@ -158,10 +180,13 @@ test('Codex exec_command without cmd denies and does not rewrite', () => {
 });
 
 /**
- * Node's child_process gives the child a blocking stdin description.
- * This sets O_NONBLOCK on that description, then execs the real Node binary.
- * @param {string[]} args
- * @param {{readFd: number, home: string, cwd: string}} context
+ * Starts the CLI with a nonblocking stdin so an empty read returns `EAGAIN`.
+ *
+ * Node's `child_process` gives the child a blocking stdin description. A Python wrapper sets `O_NONBLOCK` on that description and then execs Node.
+ *
+ * @param {string[]} args Arguments for the Node process, starting with the CLI script.
+ * @param {{readFd: number, home: string, cwd: string}} context Open read end of the FIFO, plus the temporary home and working directory.
+ * @returns {import('node:child_process').ChildProcess} The Python process after it has become the CLI. `stdout` and `stderr` are UTF-8 streams.
  */
 function spawnNonblocking(args, context) {
   const wrapper = [
@@ -181,7 +206,12 @@ function spawnNonblocking(args, context) {
 }
 
 /**
- * @param {import('node:child_process').ChildProcess} child
+ * Waits for a child process to exit and returns its status.
+ *
+ * A process that has already exited resolves immediately.
+ *
+ * @param {import('node:child_process').ChildProcess} child Process started by {@link spawnNonblocking}.
+ * @returns {Promise<number>} Exit status. `1` when the status is null.
  */
 function exitCode(child) {
   return new Promise((resolve) => {
@@ -191,14 +221,22 @@ function exitCode(child) {
 }
 
 /**
- * @param {number} ms
+ * Waits so a nonblocking read can observe `EAGAIN` before stdin is closed.
+ *
+ * @param {number} ms Delay in milliseconds.
+ * @returns {Promise<void>} Resolves after the delay.
  */
 function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 /**
- * @param {import('node:child_process').ChildProcess} child
+ * Collects stdout and stderr from a long-running CLI child.
+ *
+ * The streams are decoded as UTF-8 by the caller. `text` returns what has arrived so far.
+ *
+ * @param {import('node:child_process').ChildProcess} child Process whose stdout and stderr are piped.
+ * @returns {{text: () => {stdout: string, stderr: string}}} A reader for the text collected since this function was called.
  */
 function capture(child) {
   let stdout = '';
@@ -206,6 +244,11 @@ function capture(child) {
   child.stdout.on('data', (chunk) => { stdout += chunk; });
   child.stderr.on('data', (chunk) => { stderr += chunk; });
   return {
+    /**
+     * Returns the stdout and stderr collected so far.
+     *
+     * @returns {{stdout: string, stderr: string}} Text received from the child.
+     */
     text() { return { stdout, stderr }; },
   };
 }

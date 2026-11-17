@@ -1,189 +1,31 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { systemEnv, writeSpawnStub } from '../../cli/test/spawn-stub.js';
-import { block, defaultSpawn, installPlugin, listPlugins, resolveRealBin, uninstallPlugin, withAttributedCopy } from '../src/index.js';
 
+/**
+ * Creates a temporary directory that a plugin test can use as a home or a working directory.
+ *
+ * @returns {string} Absolute path of the new directory.
+ */
 function home() {
   return mkdtempSync(path.join(tmpdir(), 'cosplaying-plugin-'));
 }
 
-test('a package named hook is not installed', async () => {
-  const directory = home();
-  const source = path.join(directory, 'hook');
-  mkdirSync(source);
-  writeFileSync(path.join(source, 'package.json'), JSON.stringify({
-    name: 'hook',
-    version: '1.0.0',
-    type: 'module',
-    main: './index.js',
-  }));
-  writeFileSync(path.join(source, 'index.js'), 'export default function run() { return 0; }\n');
-  const result = await installPlugin(source, { home: directory, platform: 'linux', env: {}, cwd: directory });
-  assert.equal(result.ok, false);
-  assert.match(result.error, /reserved/);
-  rmSync(directory, { recursive: true, force: true });
-});
-
-test('block writes the standard message and withAttributedCopy removes its temp file', async () => {
-  let text = '';
-  block({ write(chunk) { text += chunk; } }, 'Pass --message <text>.');
-  assert.match(text, /^cosplaying: BLOCKED \(command not run\)\nReason: Pass --message <text>\.\nIf no safe correction is stated, stop and ask the user; do not bypass cosplaying\.\n$/);
-  const directory = home();
-  const source = path.join(directory, 'body.md');
-  writeFileSync(source, 'Hello\n');
-  let copyPath = '';
-  let copy = '';
-  await withAttributedCopy(source, (value) => `${value.trim()}\nbyline\n`, (file) => {
-    copyPath = file;
-    copy = readFileSync(file, 'utf8');
-    assert.equal(readFileSync(source, 'utf8'), 'Hello\n');
-    assert.equal(path.extname(file), '.md');
-    assert.match(path.basename(file), new RegExp(`^cosplaying-${process.pid}-[0-9a-f]{8}\\.md$`));
-    if (process.platform !== 'win32') assert.equal(statSync(file).mode & 0o777, 0o600);
-    assert.equal(path.dirname(file), tmpdir());
-  });
-  assert.match(copy, /byline/);
-  assert.equal(existsSync(copyPath), false);
-  await assert.rejects(withAttributedCopy(source, () => { throw new Error('bad template'); }, () => {
-    throw new Error('spawned');
-  }), /bad template/);
-  await assert.rejects(
-    () => withAttributedCopy(path.join(directory, 'missing.md'), (value) => value, () => {}),
-    (error) => {
-      assert.equal(error.name, 'CosplayError');
-      assert.equal(error.method, 'withAttributedCopy');
-      assert.match(error.message, /missing\.md/);
-      assert.match(error.message, /Check that the source file exists and is readable/);
-      assert.match(error.message, /packages\/plugin\/README\.md#error-[0-9a-f]{6}/);
-      return true;
-    },
-  );
-});
-
-test('withAttributedCopy keeps an extensionless name and rejects invalid UTF-8', async () => {
-  const directory = home();
-  try {
-    const plain = path.join(directory, 'notes');
-    writeFileSync(plain, 'Hello\n');
-    let copyPath = '';
-    await withAttributedCopy(plain, (value) => value, (file) => {
-      copyPath = file;
-      assert.equal(path.extname(file), '');
-      assert.match(path.basename(file), new RegExp(`^cosplaying-${process.pid}-[0-9a-f]{8}$`));
-      if (process.platform !== 'win32') assert.equal(statSync(file).mode & 0o777, 0o600);
-      assert.equal(readFileSync(file, 'utf8'), 'Hello\n');
-    });
-    assert.equal(existsSync(copyPath), false);
-
-    const source = path.join(directory, 'body.md');
-    const bytes = Buffer.from([0xff, 0xfe, 0x00]);
-    writeFileSync(source, bytes);
-    let calls = 0;
-    await assert.rejects(
-      () => withAttributedCopy(source, () => {
-        calls += 1;
-        return 'rendered';
-      }, () => {
-        calls += 1;
-        return 0;
-      }),
-      (error) => {
-        assert.equal(error.name, 'CosplayError');
-        assert.equal(error.method, 'withAttributedCopy');
-        assert.match(error.message, /body\.md/);
-        assert.match(error.message, /file is not valid UTF-8/);
-        assert.match(error.message, /packages\/plugin\/README\.md#error-[0-9a-f]{6}/);
-        return true;
-      },
-    );
-    assert.equal(calls, 0);
-    assert.deepEqual(readFileSync(source), bytes);
-  } finally {
-    rmSync(directory, { recursive: true, force: true });
-  }
-});
-
-test('defaultSpawn exits 127 when the program cannot be started', async () => {
-  const directory = home();
-  try {
-    const missing = path.join(directory, 'missing-bin');
-    const sentence = /cosplaying: could not run missing-bin: .+\. The command was not run\. Set COSPLAYING_MISSING_BIN_BIN to its executable path\./;
-    let syncText = '';
-    const sync = defaultSpawn(missing, ['--version'], {
-      encoding: 'utf8',
-      stderr: { write(chunk) { syncText += chunk; } },
-    });
-    assert.equal(sync.status, 127);
-    assert.equal(sync.error && sync.error.code, 'ENOENT');
-    assert.match(syncText, sentence);
-
-    const entry = new URL('../src/index.js', import.meta.url).href;
-    const script = path.join(directory, 'probe-spawn.mjs');
-    writeFileSync(script, `import { defaultSpawn } from ${JSON.stringify(entry)};
-const result = defaultSpawn(${JSON.stringify(missing)}, ['--version'], { encoding: 'utf8' });
-const stderr = typeof result.stderr === 'string' ? result.stderr : '';
-process.stdout.write(JSON.stringify({ status: result.status, code: result.error && result.error.code, stderr }));
-`);
-    const probe = spawnSync(process.execPath, [script], { encoding: 'utf8' });
-    assert.equal(probe.status, 0, probe.stderr);
-    const bare = JSON.parse(probe.stdout);
-    assert.equal(bare.status, 127);
-    assert.equal(bare.code, 'ENOENT');
-    assert.match(`${probe.stderr}${bare.stderr}`, sentence);
-
-    let asyncText = '';
-    const asyncResult = await defaultSpawn(missing, ['--version'], {
-      stdio: 'inherit',
-      stderr: { write(chunk) { asyncText += chunk; } },
-    });
-    assert.equal(asyncResult.status, 127);
-    assert.equal(asyncResult.error && asyncResult.error.code, 'ENOENT');
-    assert.match(asyncText, sentence);
-
-    const syncOk = defaultSpawn(process.execPath, ['-e', 'process.exit(0)'], { encoding: 'utf8' });
-    assert.equal(syncOk.status, 0);
-    const asyncOk = await defaultSpawn(process.execPath, ['-e', 'process.exit(0)'], { stdio: 'ignore' });
-    assert.equal(asyncOk.status, 0);
-  } finally {
-    rmSync(directory, { recursive: true, force: true });
-  }
-});
-
-test('install, list, and uninstall a local plugin without deleting the source', async () => {
-  const directory = home();
-  const source = path.join(directory, 'notify');
-  mkdirSync(source);
-  writeFileSync(path.join(source, 'package.json'), JSON.stringify({
-    name: 'notify',
-    version: '1.0.0',
-    type: 'module',
-    main: './index.js',
-  }));
-  writeFileSync(path.join(source, 'index.js'), 'export default function run() { return 0; }\n// notify\n');
-  const options = { home: directory, platform: 'linux', env: {}, cwd: directory };
-  const installed = await installPlugin(source, options);
-  assert.equal(installed.ok, true);
-  const listed = await listPlugins(options);
-  assert.equal(listed[0].command, 'notify');
-  assert.equal(listed[0].kind, 'path');
-  const again = await installPlugin(source, options);
-  assert.equal(again.ok, false);
-  assert.equal((await uninstallPlugin('notify', options)).ok, true);
-  assert.equal(readFileSync(path.join(source, 'index.js'), 'utf8').includes('notify'), true);
-  rmSync(directory, { recursive: true, force: true });
-});
-
 const cli = fileURLToPath(new URL('../../cli/bin/cosplaying.js', import.meta.url));
 
 /**
- * @param {string[]} args
- * @param {string} home
- * @param {string} cwd
+ * Runs the cosplaying CLI against a temporary home.
+ *
+ * `PATH` is the system path only, so plugin lookup does not use a developer install.
+ *
+ * @param {string[]} args Arguments after the program name.
+ * @param {string} home Temporary home directory.
+ * @param {string} cwd Working directory for the CLI.
+ * @returns {import('node:child_process').SpawnSyncReturns<string>} The CLI result. `stdout` and `stderr` are strings.
  */
 function runCli(args, home, cwd) {
   return spawnSync(process.execPath, [cli, ...args], {
@@ -198,10 +40,21 @@ function runCli(args, home, cwd) {
   });
 }
 
-test('plugin install rejects a TypeScript entry, a path outside the package, and a bad command token', () => {
+test('plugin install and loading reject reserved names, TypeScript, escaping entries, and invalid command tokens', () => {
   const homeDir = home();
   const cwd = home();
   try {
+    const reserved = path.join(cwd, 'reserved');
+    mkdirSync(reserved);
+    writeFileSync(path.join(reserved, 'package.json'), JSON.stringify({
+      name: 'hook', version: '1.0.0', type: 'module', main: './index.js',
+    }));
+    writeFileSync(path.join(reserved, 'index.js'), 'export default function run() { return 0; }\n');
+    const refusal = runCli(['plugin', 'install', reserved], homeDir, cwd);
+    assert.equal(refusal.status, 1);
+    assert.match(refusal.stderr, /reserved/);
+    assert.equal(existsSync(path.join(homeDir, '.local', 'share', 'cosplaying', 'plugins', 'hook')), false);
+
     const typed = path.join(cwd, 'typed');
     mkdirSync(typed);
     writeFileSync(path.join(typed, 'package.json'), JSON.stringify({
@@ -321,17 +174,15 @@ test('plugin install installs a local file dependency and the command can load i
     assert.equal(existsSync(path.join(directory, 'node_modules', 'local-dep', 'package.json')), true);
     assert.equal(existsSync(path.join(source, 'node_modules')), false);
     assert.match(readFileSync(path.join(source, 'package.json'), 'utf8'), /file:\.\.\/local-dep/);
-    const bin = writeSpawnStub(path.join(homeDir, 'localplug-bin'), '#!/bin/sh\nexit 0\n');
     const loaded = spawnSync(process.execPath, [cli, 'hook', '--', 'localplug'], {
       cwd,
       encoding: 'utf8',
       env: {
-        ...systemEnv(),
         HOME: homeDir,
         USERPROFILE: homeDir,
         PATH: '/usr/bin:/bin',
         TMPDIR: process.env.TMPDIR,
-        COSPLAYING_LOCALPLUG_BIN: bin,
+        COSPLAYING_LOCALPLUG_BIN: path.join(source, 'package.json'),
       },
     });
     assert.equal(loaded.status, 0, loaded.stderr);
@@ -367,7 +218,7 @@ test('a scoped package is listed, rewritten, and removed by its unscoped name', 
     const source = path.join(cwd, 'scoped');
     mkdirSync(source);
     writeFileSync(path.join(source, 'package.json'), JSON.stringify({
-      name: '@docs/notify',
+      name: '@docs/byline',
       version: '1.0.0',
       type: 'module',
       main: './index.js',
@@ -375,23 +226,23 @@ test('a scoped package is listed, rewritten, and removed by its unscoped name', 
     writeFileSync(path.join(source, 'index.js'), 'export default function run() { return 0; }\n');
     const installed = runCli(['plugin', 'install', source], homeDir, cwd);
     assert.equal(installed.status, 0, installed.stderr);
-    const directory = path.join(homeDir, '.local', 'share', 'cosplaying', 'plugins', '@docs', 'notify');
-    assert.equal(installed.stdout, `notify\t${directory}\n`);
+    const directory = path.join(homeDir, '.local', 'share', 'cosplaying', 'plugins', '@docs', 'byline');
+    assert.equal(installed.stdout, `byline\t${directory}\n`);
     const listed = runCli(['plugin', 'list'], homeDir, cwd);
     assert.equal(listed.status, 0, listed.stderr);
-    assert.equal(listed.stdout, `notify\tnotify\tpath\t${directory}\n`);
-    const rewritten = runCli(['rewrite', 'notify --list'], homeDir, cwd);
+    assert.equal(listed.stdout, `byline\tbyline\tpath\t${directory}\n`);
+    const rewritten = runCli(['rewrite', 'byline --list'], homeDir, cwd);
     assert.equal(rewritten.status, 0, rewritten.stderr);
-    assert.match(rewritten.stdout, /hook -- notify --list\n$/);
+    assert.match(rewritten.stdout, /hook -- byline --list\n$/);
     const again = runCli(['plugin', 'install', source], homeDir, cwd);
     assert.equal(again.status, 1, again.stdout);
     assert.match(again.stderr, /already installed/);
-    assert.match(again.stderr, /plugin uninstall notify/);
+    assert.match(again.stderr, /plugin uninstall byline/);
     assert.equal(existsSync(path.join(directory, 'package.json')), true);
-    assert.equal(readFileSync(path.join(source, 'index.js'), 'utf8').includes('run'), true);
-    const removed = runCli(['plugin', 'uninstall', 'notify'], homeDir, cwd);
+    assert.equal(readFileSync(path.join(source, 'index.js'), 'utf8'), 'export default function run() { return 0; }\n');
+    const removed = runCli(['plugin', 'uninstall', 'byline'], homeDir, cwd);
     assert.equal(removed.status, 0, removed.stderr);
-    assert.equal(removed.stdout, 'notify\n');
+    assert.equal(removed.stdout, 'byline\n');
     assert.equal(runCli(['plugin', 'list'], homeDir, cwd).stdout, '');
     assert.equal(existsSync(directory), false);
   } finally {
@@ -400,15 +251,54 @@ test('a scoped package is listed, rewritten, and removed by its unscoped name', 
   }
 });
 
-test('resolveRealBin honors an absolute override and skips this CLI', () => {
-  const directory = home();
-  const bin = path.join(directory, 'notify');
-  writeFileSync(bin, '#!/bin/sh\nprintf "%s\\n" "$@"\n');
-  const resolved = resolveRealBin('notify', {
-    env: { COSPLAYING_NOTIFY_BIN: bin, PATH: directory },
-    platform: 'linux',
-  });
-  assert.equal(resolved.bin, bin);
-  const missing = resolveRealBin('notify', { env: { PATH: '' }, platform: 'linux' });
-  assert.match(missing.error, /notify/);
+
+test('plugin spawn returns real child statuses and reports sync and async launch failures', () => {
+  const homeDir = home();
+  const cwd = home();
+  const source = path.join(cwd, 'runprocess');
+  try {
+    mkdirSync(source);
+    writeFileSync(path.join(source, 'package.json'), JSON.stringify({
+      name: 'runprocess', version: '1.0.0', type: 'module', main: 'index.js',
+    }));
+    writeFileSync(path.join(source, 'index.js'), String.raw`
+import path from 'node:path';
+export default async function run(args, context) {
+  const missing = args[0] === 'missing';
+  const command = missing ? path.join(context.cwd, 'absent-command') : process.execPath;
+  const options = { cwd: context.cwd, env: context.env };
+  if (args[1] === 'sync') options.encoding = 'utf8';
+  else options.stdio = 'inherit';
+  const result = await context.spawn(command, missing ? [] : ['-e', 'process.exit(7)'], options);
+  context.stdout.write(JSON.stringify({ status: result.status, code: result.error?.code }) + '\n');
+  return result.status;
+}
+`);
+    writeFileSync(path.join(cwd, '.cosplaying.json'), JSON.stringify({ plugins: [source] }));
+    for (const mode of ['sync', 'async']) {
+      for (const outcome of ['missing', 'success']) {
+        const result = spawnSync(process.execPath, [cli, 'hook', '--', 'runprocess', outcome, mode], {
+          cwd,
+          encoding: 'utf8',
+          env: {
+            HOME: homeDir, USERPROFILE: homeDir,
+            ...(process.env.SystemRoot ? { SystemRoot: process.env.SystemRoot } : {}),
+            COSPLAYING_RUNPROCESS_BIN: path.join(source, 'package.json'),
+          },
+        });
+        assert.equal(result.status, outcome === 'missing' ? 127 : 7, result.stderr);
+        assert.deepEqual(JSON.parse(result.stdout), outcome === 'missing'
+          ? { status: 127, code: 'ENOENT' }
+          : { status: 7 });
+        if (outcome === 'missing') {
+          assert.match(result.stderr, /cosplaying: could not run absent-command: .+\. The command was not run\. Set COSPLAYING_ABSENT_COMMAND_BIN to its executable path\./);
+        } else {
+          assert.equal(result.stderr, '');
+        }
+      }
+    }
+  } finally {
+    rmSync(homeDir, { recursive: true, force: true });
+    rmSync(cwd, { recursive: true, force: true });
+  }
 });

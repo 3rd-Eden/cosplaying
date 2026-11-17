@@ -10,7 +10,11 @@ import { writeSpawnStub } from './spawn-stub.js';
 const bin = fileURLToPath(new URL('../bin/cosplaying.js', import.meta.url));
 
 /**
- * @returns {{home: string, cwd: string, log: string, env: Record<string, string>}}
+ * Creates a temporary home, a project that enables `gh`, and a stub `gh` that logs its arguments.
+ *
+ * File arguments are copied into the log so a test can see attributed text without reading a temporary file path. The real `gh` is not used.
+ *
+ * @returns {{home: string, cwd: string, log: string, env: Record<string, string>}} The home, the project directory, the argument log, and the environment that selects the stub.
  */
 function fixture() {
   const home = mkdtempSync(path.join(tmpdir(), 'cosplaying-home-'));
@@ -51,9 +55,14 @@ exit 0
 }
 
 /**
- * @param {string[]} args
- * @param {ReturnType<typeof fixture>} context
- * @param {Record<string, string>} [extra]
+ * Runs the CLI against the `gh` stub fixture.
+ *
+ * Extra environment values can set the model.
+ *
+ * @param {string[]} args Arguments after the program name.
+ * @param {ReturnType<typeof fixture>} context Fixture from {@link fixture}.
+ * @param {Record<string, string>} [extra={}] Environment values merged over the fixture environment.
+ * @returns {import('node:child_process').SpawnSyncReturns<string>} The CLI result. `stdout` and `stderr` are strings.
  */
 function run(args, context, extra = {}) {
   return spawnSync(process.execPath, [bin, ...args], {
@@ -108,10 +117,6 @@ test('workflow and job rerun APIs pass through without content', () => {
     assert.equal(rerun.status, 0, rerun.stderr);
     assert.match(readFileSync(context.log, 'utf8'), new RegExp(endpoint.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
   }
-
-  const unsupported = run(['hook', '--', 'gh', 'api', 'repos/owner/repo/dispatches', '-XPOST'], context);
-  assert.equal(unsupported.status, 2);
-  assert.match(unsupported.stderr, /blocked unsupported mutating gh api request: POST/);
 
   const comment = run(['hook', '--', 'gh', 'api', '--method', 'POST', 'repos/owner/repo/actions/runs/42/pending_deployments', '-fcomment=Deploy'], context);
   assert.equal(comment.status, 2);

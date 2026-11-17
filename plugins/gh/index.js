@@ -44,10 +44,12 @@ const ALIASES = new Map([
 
 const GLOBAL_VALUE_FLAGS = new Set(['--repo', '-R', '--hostname']);
 /**
- * Finds the first two command words and their argument positions.
- * @param {string[]} args - GitHub CLI argument list.
- * @returns {{path: string, rawPath: string, indices: number[], nextIndex: number}} Normalized and raw command paths with scan offsets.
- * @public
+ * Finds the GitHub CLI command path after the global options.
+ *
+ * The first two words form the path, for example `pr create`. An alias such as `pr new` is normalized to `pr create`. `api` is one word. `--repo` and `--hostname` consume the following argument so they are not treated as the command.
+ *
+ * @param {string[]} args Arguments after the `gh` executable.
+ * @returns {{path: string, rawPath: string, indices: number[], nextIndex: number}} `path` is the normalized command. `rawPath` is the text the user typed. `indices` are the argument positions of those words. `nextIndex` is where flags and positionals begin.
  */
 function commandInfo(args) {
   const words = [];
@@ -71,10 +73,12 @@ function commandInfo(args) {
 }
 
 /**
- * Returns the text flag groups supported by a GitHub CLI command path.
- * @param {string} commandPath - Normalized GitHub CLI command path.
- * @returns {{value: string[], file: string[], template: string[]} | null} Supported value, file, and template flags, or null when unsupported.
- * @private
+ * Returns the text flags that a GitHub CLI command uses for user-authored text.
+ *
+ * Only those flags are rewritten. A command that is not in the list has no text for this plugin to attribute through a flag.
+ *
+ * @param {string} commandPath Normalized command path from {@link commandInfo}, for example `pr create`.
+ * @returns {{value: string[], file: string[], template: string[]} | null} Flag names for inline text, file text, and a pull-request template. Null when this command has no such flags.
  */
 function descriptorFor(commandPath) {
   if (BODY_PATHS.has(commandPath)) {
@@ -90,18 +94,18 @@ function descriptorFor(commandPath) {
 }
 
 /**
- * Rewrites explicit PR merge text in place while preserving body source files.
- * @param {string[]} args - Mutable GitHub CLI arguments.
- * @param {object} context - Attribution and temporary-file context.
- * @param {Record<string, string | undefined>} context.env - Environment containing the model identity.
- * @param {string} context.cwd - Working directory for attribution config.
- * @param {string} [context.home] - Home directory for attribution config.
- * @param {string} [context.platform] - Platform for attribution config paths.
- * @param {{write: function(string, string=): string}} context.tempFiles - Private copy writer for body files.
- * @param {function(): string} context.readStdin - Lazy stdin reader for `--body-file -`.
- * @returns {boolean} Whether an explicit merge message was attributed.
- * @throws {CosplayError} If identity is missing, text flags conflict, or rebase cannot carry a trailer.
- * @private
+ * Adds the attribution trailer to an explicit `pr merge` message.
+ *
+ * A body flag is rewritten in place. A body file is copied to a private file so the source file stays unchanged. A subject with no body gets a body that contains only the trailer. Rebase cannot store that message, so it is refused. The source file is not modified.
+ *
+ * @param {string[]} args Mutable `gh` arguments. Matching flags are replaced in this array.
+ * @param {object} tools Helpers for this rewrite.
+ * @param {object} tools.context Hook context.
+ * @param {{renderTrailer: () => string}} tools.context.attribution Helper that returns one `AI-Assisted-By` line.
+ * @param {{write: function(string, string=): string}} tools.tempFiles Writer for a private copy of a body file.
+ * @param {function(): string} tools.readStdin Reader used when the body file is `-`.
+ * @returns {boolean} True when a merge message was attributed. False when the command has no subject, body, or body file.
+ * @throws {CosplayError} The model or link is unusable, more than one body source is present, a flag has no value, or the merge uses rebase.
  */
 function rewriteMergeArgs(args, { context, tempFiles, readStdin }) {
   const body = flagOccurrences(args, ['--body', '-b']);
@@ -123,15 +127,18 @@ function rewriteMergeArgs(args, { context, tempFiles, readStdin }) {
 }
 
 /**
- * Annotates a file-backed text flag by redirecting changed input to a temp file.
- * @param {string[]} args - Mutable GitHub CLI argument list.
- * @param {{flag: string, index: number, valueIndex: number, inline: boolean, value?: string}} occurrence - Parsed file flag.
- * @param {{model: string, template: string, link: string | undefined}} config - Current attribution settings.
- * @param {ReturnType<typeof createTempFiles>} tempFiles - Temporary file manager for rewritten input.
- * @param {function(): string} readStdin - Cached stdin reader for dash file values.
- * @returns {boolean} Whether the argument list now points to attributed content.
- * @throws {CosplayError} If the file input is missing, unreadable, or cannot be attributed.
- * @private
+ * Attributes the text behind a file flag and points the argument at a private copy.
+ *
+ * The source file is not modified. Stdin (`-`) is always copied, because the wrapped `gh` process would not see the same stdin. An unchanged file that was not read from stdin keeps its original path.
+ *
+ * @param {string[]} args Mutable `gh` arguments. The file flag is replaced when a copy is written.
+ * @param {{flag: string, index: number, valueIndex: number, inline: boolean, attached?: boolean, value?: string}} occurrence Parsed file flag from {@link flagOccurrences}.
+ * @param {object} context Hook context.
+ * @param {{annotateMarkdown: function(string): string}} context.attribution Helper that appends the Markdown byline.
+ * @param {{write: function(string, string=): string}} tempFiles Writer for the private copy.
+ * @param {function(): string} readStdin Reader used when the file path is `-`.
+ * @returns {boolean} True when `args` now points at attributed content. False when the file text did not change.
+ * @throws {CosplayError} The flag has no path, the file cannot be read, or the text cannot be attributed.
  */
 function annotateFileOccurrence(args, occurrence, context, tempFiles, readStdin) {
   if (occurrence.value === undefined) throw ghError(`${occurrence.flag} needs a value. Pass the text-file path after the flag, or use "${occurrence.flag}=<path>"; use - for stdin when supported.`);
@@ -146,13 +153,16 @@ function annotateFileOccurrence(args, occurrence, context, tempFiles, readStdin)
 }
 
 /**
- * Annotates a text value supplied directly through a command flag.
- * @param {string[]} args - Mutable GitHub CLI argument list.
- * @param {{flag: string, index: number, valueIndex: number, inline: boolean, value?: string}} occurrence - Parsed text flag.
- * @param {{model: string, template: string, link: string | undefined}} config - Current attribution settings.
- * @returns {boolean} Whether the argument value changed.
- * @throws {CosplayError} If the value cannot be attributed.
- * @private
+ * Attributes text that was passed directly on a command flag.
+ *
+ * The flag value is replaced in `args`. A missing value is left for the caller to reject.
+ *
+ * @param {string[]} args Mutable `gh` arguments.
+ * @param {{flag: string, index: number, valueIndex: number, inline: boolean, attached?: boolean, value?: string}} occurrence Parsed text flag from {@link flagOccurrences}.
+ * @param {object} context Hook context.
+ * @param {{annotateMarkdown: function(string): string}} context.attribution Helper that appends the Markdown byline.
+ * @returns {boolean} True when the flag value changed. False when the value is missing or the attributed text is identical.
+ * @throws {CosplayError} The text cannot be attributed.
  */
 function annotateValueOccurrence(args, occurrence, context) {
   if (occurrence.value === undefined) return false;
@@ -163,15 +173,18 @@ function annotateValueOccurrence(args, occurrence, context) {
 }
 
 /**
- * Converts a pull request template input into an attributed body-file argument.
- * @param {string[]} args - Mutable GitHub CLI argument list.
- * @param {{flag: string, index: number, valueIndex: number, inline: boolean, value?: string}} occurrence - Parsed template flag.
- * @param {{model: string, template: string, link: string | undefined}} config - Current attribution settings.
- * @param {ReturnType<typeof createTempFiles>} tempFiles - Temporary file manager for the converted body.
- * @param {function(): string} readStdin - Cached stdin reader for dash template values.
- * @returns {boolean} Whether the template argument was replaced.
- * @throws {CosplayError} If the template input is missing, unreadable, or cannot be attributed.
- * @private
+ * Turns a pull-request template flag into an attributed `--body-file`.
+ *
+ * `gh` would expand the template itself, and that expansion would not contain the byline. The template is read here, attributed, and passed as a body file so the text `gh` sends is the attributed text.
+ *
+ * @param {string[]} args Mutable `gh` arguments. The template flag is replaced with `--body-file`.
+ * @param {{flag: string, index: number, valueIndex: number, inline: boolean, attached?: boolean, value?: string}} occurrence Parsed template flag.
+ * @param {object} context Hook context.
+ * @param {{annotateMarkdown: function(string): string}} context.attribution Helper that appends the Markdown byline.
+ * @param {{write: function(string, string=): string}} tempFiles Writer for the attributed body.
+ * @param {function(): string} readStdin Reader used when the template path is `-`.
+ * @returns {boolean} True. The template flag is always replaced.
+ * @throws {CosplayError} The flag has no path, the template cannot be read, or the text cannot be attributed.
  */
 function replaceTemplate(args, occurrence, context, tempFiles, readStdin) {
   if (occurrence.value === undefined) throw ghError(`${occurrence.flag} needs a value. Pass the template-file path after the flag or as "${occurrence.flag}=<path>".`);
@@ -187,11 +200,13 @@ function replaceTemplate(args, occurrence, context, tempFiles, readStdin) {
 }
 
 /**
- * Finds the positional task description in a gh agent-task command.
- * @param {string[]} args - GitHub CLI argument list.
- * @param {{nextIndex: number}} info - Parsed command information containing the scan start.
- * @returns {number} Description argument index, or -1 when none is present.
- * @private
+ * Finds the positional task description on `gh agent-task create`.
+ *
+ * Flags that take a value are skipped. The first remaining word is the description that must be attributed. `--` starts that description at the next word.
+ *
+ * @param {string[]} args Full `gh` arguments.
+ * @param {{nextIndex: number}} info Parsed command. `nextIndex` is the first argument after the command words.
+ * @returns {number} Index of the description in `args`. `-1` when no description is present.
  */
 function agentTaskPosition(args, info) {
   const valueFlags = new Set(['--base', '-b', '--custom-agent', '-a', '--repo', '-R', '--from-file', '-F']);
@@ -210,16 +225,15 @@ function agentTaskPosition(args, info) {
 }
 
 /**
- * Attributes supported GitHub CLI text writes and blocks unsupported writes.
- * @param {string[]} inputArgs - GitHub CLI arguments after the gh command token.
- * @param {object} [options] - Environment, paths, platform, and stdin overrides.
- * @param {Record<string, string | undefined>} [options.env=process.env] - Environment variables used for attribution config.
- * @param {string} [options.cwd=process.cwd()] - Working directory used to find project config.
- * @param {string} [options.home] - Home directory override for user config.
- * @param {string} [options.platform] - Platform override for user config paths.
- * @param {string | Buffer | NodeJS.ReadStream} [options.stdin=process.stdin] - Input used by dash file arguments.
- * @returns {{args: string[], changed: boolean, path: string, tempFiles: ReturnType<typeof createTempFiles> | {cleanup: function(): void}, blockedReason: string | null}} Prepared arguments, cleanup handle, and any reason a write was blocked.
- * @public
+ * Rewrites `gh` arguments so user-authored text includes attribution.
+ *
+ * `api` and `pr merge` have their own rewriters. Other supported commands attribute body, notes, description, and template flags. A command that must have text, but has none, is blocked. `--web` is blocked because the text typed in the browser cannot be attributed. A failure cleans up temporary files and returns the original arguments with a block reason.
+ *
+ * @param {string[]} inputArgs Arguments after the `gh` executable. This array is not mutated.
+ * @param {object} context Hook context.
+ * @param {NodeJS.ReadStream | string | Buffer} [context.stdin] Stdin used when a file flag is `-`.
+ * @param {{annotateMarkdown: function(string): string, renderTrailer: function(): string}} context.attribution Helpers for the byline and the trailer.
+ * @returns {{args: string[], changed: boolean, path: string, tempFiles: {cleanup: function(): void}, blockedReason: string | null}} Arguments to spawn, whether they differ, the normalized command path, a cleanup handle for private copies, and a block reason when `gh` must not run.
  */
 function rewriteGhArgs(inputArgs, context) {
   const args = [...inputArgs];
@@ -295,9 +309,20 @@ function rewriteGhArgs(inputArgs, context) {
 
 
 /**
- * @param {string[]} args
- * @param {object} context
- * @returns {Promise<number>}
+ * Runs `gh` after attributing the text this command will publish.
+ *
+ * A command that cannot be attributed is refused and `gh` is not started. Private copies of file input are deleted after `gh` exits, including when `gh` fails to start.
+ *
+ * @param {string[]} args Arguments after `gh`.
+ * @param {object} context Hook context.
+ * @param {string} context.cwd Working directory passed to `gh`.
+ * @param {NodeJS.ProcessEnv} context.env Environment passed to `gh`.
+ * @param {NodeJS.WritableStream} context.stderr Stream that receives a block reason.
+ * @param {NodeJS.ReadStream | string | Buffer} [context.stdin] Stdin for a file flag of `-`.
+ * @param {string} context.realBin Absolute path of the real `gh` executable.
+ * @param {Function} context.spawn Spawn function. It returns a `{ status }` result.
+ * @param {{annotateMarkdown: function(string): string, renderTrailer: function(): string}} context.attribution Attribution helpers.
+ * @returns {Promise<number>} `2` when the command is blocked. Otherwise the `gh` exit status, or `127` when it cannot be started.
  */
 export default async function run(args, context) {
   const prepared = rewriteGhArgs(args, context);
@@ -311,8 +336,8 @@ export default async function run(args, context) {
       env: context.env,
       stdio: 'inherit',
     }));
-    if (child?.error) return child.status ?? 127;
-    return typeof child?.status === 'number' ? child.status : 1;
+    if (child.error) return child.status ?? 127;
+    return child.status ?? 1;
   } finally {
     prepared.tempFiles.cleanup();
   }

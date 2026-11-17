@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -10,10 +10,15 @@ const bin = fileURLToPath(new URL('../bin/cosplaying.js', import.meta.url));
 const gitPlugin = fileURLToPath(new URL('../../../plugins/git', import.meta.url));
 
 /**
- * @param {string[]} args
- * @param {string} home
- * @param {string} cwd
- * @param {Record<string, string>} [env]
+ * Runs the CLI with the developer `PATH`, so a real `git` can be found when a test needs one.
+ *
+ * Extra environment values can point a command at a stub instead.
+ *
+ * @param {string[]} args Arguments after the program name.
+ * @param {string} home Temporary home directory.
+ * @param {string} cwd Working directory for the CLI.
+ * @param {Record<string, string>} [env={}] Extra environment variables.
+ * @returns {import('node:child_process').SpawnSyncReturns<string>} The CLI result. `stdout` and `stderr` are strings.
  */
 function run(args, home, cwd, env = {}) {
   return spawnSync(process.execPath, [bin, ...args], {
@@ -29,7 +34,11 @@ function run(args, home, cwd, env = {}) {
 }
 
 /**
- * @returns {{home: string, cwd: string}}
+ * Creates a temporary home and working directory for a shipped-plugin test.
+ *
+ * Enable and disable write the user settings under this home.
+ *
+ * @returns {{home: string, cwd: string}} Absolute paths of the two directories.
  */
 function isolated() {
   const home = mkdtempSync(path.join(tmpdir(), 'cosplaying-home-'));
@@ -64,8 +73,26 @@ test('plugin enable writes the user config and disable removes the name', () => 
   assert.deepEqual(JSON.parse(written).plugins, ['git']);
   const piExtension = path.join(home, '.pi', 'agent', 'extensions', 'cosplaying.js');
   const openCodeExtension = path.join(home, '.config', 'opencode', 'plugins', 'cosplaying.js');
-  assert.match(readFileSync(piExtension, 'utf8'), /const COMMANDS = \["git"\]/);
-  assert.match(readFileSync(openCodeExtension, 'utf8'), /const COMMANDS = \["git"\]/);
+  {
+    const project = path.join(cwd, '.cosplaying.json');
+    writeFileSync(project, '{');
+    const probe = spawnSync(process.execPath, [
+      fileURLToPath(new URL('./fixtures/extension-host.mjs', import.meta.url)),
+      piExtension, openCodeExtension, 'git status', 'Shell',
+    ], {
+      cwd, encoding: 'utf8',
+      env: { HOME: home, USERPROFILE: home, ...(process.env.SystemRoot ? { SystemRoot: process.env.SystemRoot } : {}) },
+    });
+    rmSync(project);
+    assert.equal(probe.status, 0, probe.stderr);
+    assert.equal(probe.stderr, '');
+    const state = JSON.parse(probe.stdout);
+    assert.equal(state.piBlock, true);
+    assert.match(state.piReason, /cosplaying hook/);
+    assert.match(state.openError, /cosplaying hook/);
+    assert.equal(state.piLiteralBlock, null);
+    assert.equal(state.openLiteral, 'echo git status');
+  }
   const listed = run(['plugin', 'list'], home, cwd);
   assert.equal(listed.status, 0, listed.stderr);
   assert.equal(listed.stdout, `git\tgit\tbundled\t${gitPlugin}\n`);
@@ -85,8 +112,27 @@ test('plugin enable writes the user config and disable removes the name', () => 
   assert.equal(disabled.status, 0, disabled.stderr);
   assert.equal(disabled.stdout, 'git\n');
   assert.deepEqual(JSON.parse(readFileSync(file, 'utf8')).plugins, []);
-  assert.match(readFileSync(piExtension, 'utf8'), /const COMMANDS = \[\]/);
-  assert.match(readFileSync(openCodeExtension, 'utf8'), /const COMMANDS = \[\]/);
+  {
+    const project = path.join(cwd, '.cosplaying.json');
+    writeFileSync(project, '{');
+    const probe = spawnSync(process.execPath, [
+      fileURLToPath(new URL('./fixtures/extension-host.mjs', import.meta.url)),
+      piExtension, openCodeExtension, 'git status', 'Shell',
+    ], {
+      cwd, encoding: 'utf8',
+      env: { HOME: home, USERPROFILE: home, ...(process.env.SystemRoot ? { SystemRoot: process.env.SystemRoot } : {}) },
+    });
+    rmSync(project);
+    assert.equal(probe.status, 0, probe.stderr);
+    assert.equal(probe.stderr, '');
+    const state = JSON.parse(probe.stdout);
+    assert.equal(state.piBlock, null);
+    assert.equal(state.openError, '');
+    assert.equal(state.piCommand, 'git status');
+    assert.equal(state.openCommand, 'git status');
+    assert.equal(state.piLiteralBlock, null);
+    assert.equal(state.openLiteral, 'echo git status');
+  }
   const after = run(['plugin', 'list'], home, cwd);
   assert.equal(after.stdout, '');
 });
@@ -147,17 +193,6 @@ test('enable edits a yaml settings file, selects the first config file, and reje
   assert.match(refused.stderr, /plugin uninstall git/);
 });
 
-test('disable names a project file that enables a shipped plugin', () => {
-  const { home, cwd } = isolated();
-  const project = path.join(cwd, '.cosplaying.json');
-  writeFileSync(project, `${JSON.stringify({ plugins: ['gh'] })}\n`);
-  const result = run(['plugin', 'disable', 'gh'], home, cwd);
-  assert.equal(result.status, 1);
-  assert.match(result.stderr, /enabled in/);
-  assert.match(result.stderr, /\.cosplaying\.json/);
-  assert.equal(readFileSync(project, 'utf8'), `${JSON.stringify({ plugins: ['gh'] })}\n`);
-});
-
 test('disable removes the user setting and reports a project setting that still enables the plugin', () => {
   const { home, cwd } = isolated();
   const user = path.join(home, '.config', 'cosplaying', '.cosplaying.json');
@@ -166,11 +201,12 @@ test('disable removes the user setting and reports a project setting that still 
   writeFileSync(user, `${JSON.stringify({ plugins: ['git'] })}\n`);
   writeFileSync(project, `${JSON.stringify({ plugins: ['git'] })}\n`);
 
-  const result = run(['plugin', 'disable', 'git'], home, cwd);
-
-  assert.equal(result.status, 1);
-  assert.match(result.stderr, /enabled in/);
-  assert.equal(result.stderr.includes(project), true);
-  assert.deepEqual(JSON.parse(readFileSync(user, 'utf8')).plugins, []);
-  assert.deepEqual(JSON.parse(readFileSync(project, 'utf8')).plugins, ['git']);
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const result = run(['plugin', 'disable', 'git'], home, cwd);
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /enabled in/);
+    assert.equal(result.stderr.includes(project), true);
+    assert.deepEqual(JSON.parse(readFileSync(user, 'utf8')).plugins, []);
+    assert.equal(readFileSync(project, 'utf8'), `${JSON.stringify({ plugins: ['git'] })}\n`);
+  }
 });

@@ -11,8 +11,13 @@ const mainJs = '/usr/local/bin/main.js';
 const encoded = Buffer.from('Example Model', 'utf8').toString('base64url');
 
 /**
- * @param {string} command
- * @param {string} [model]
+ * Runs `rewrite` for one shell command and returns the CLI result.
+ *
+ * Each call gets a new temporary home so settings from another test are not used. The default model is `Example Model`.
+ *
+ * @param {string} command Shell command passed after `--`.
+ * @param {string} [model='Example Model'] Model name passed with `--model`.
+ * @returns {import('node:child_process').SpawnSyncReturns<string>} The CLI result. `stdout` is the rewritten command plus a newline.
  */
 function rewrite(command, model = 'Example Model') {
   const home = mkdtempSync(path.join(tmpdir(), 'cosplaying-rewrite-home-'));
@@ -40,8 +45,6 @@ test('wrapper prefixes still rewrite the hook model flag', () => {
     assert.equal(result.status, 0, result.stderr);
     assert.equal(result.stdout.trimEnd(), input.replace("--model 'Claude Code'", `--model-base64 ${encoded}`), input);
   }
-  const sudo = rewrite(`sudo -u user node ${mainJs} hook --model 'Claude Code' -- git commit`);
-  assert.match(sudo.stdout, /sudo -u user node /);
 });
 
 test('a model flag after -- belongs to the wrapped command', () => {

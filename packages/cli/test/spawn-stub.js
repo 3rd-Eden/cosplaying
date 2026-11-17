@@ -55,9 +55,11 @@ const source = [
 let compiled = '';
 
 /**
- * Windows needs SystemRoot so a spawned program can start.
- * On other platforms this is empty.
- * @returns {NodeJS.ProcessEnv}
+ * Returns the Windows variables a spawned program needs in order to start.
+ *
+ * `SystemRoot` and `windir` are copied when the parent process has them. On other platforms the result is empty.
+ *
+ * @returns {NodeJS.ProcessEnv} The copied variables. An empty object when neither variable is set.
  */
 export function systemEnv() {
   /** @type {NodeJS.ProcessEnv} */
@@ -68,7 +70,11 @@ export function systemEnv() {
 }
 
 /**
- * @returns {string}
+ * Finds the .NET Framework C# compiler used to build the Windows command stub.
+ *
+ * The 64-bit compiler is preferred. A missing compiler returns an empty string so the caller can report that the stub cannot be built.
+ *
+ * @returns {string} Absolute path of `csc.exe`. An empty string when neither candidate exists.
  */
 function cscPath() {
   const root = process.env.WINDIR || process.env.SystemRoot || 'C:\\Windows';
@@ -80,7 +86,12 @@ function cscPath() {
 }
 
 /**
- * @returns {string}
+ * Compiles the Windows command stub once for this process and worker.
+ *
+ * Later calls reuse the executable. The stub reads a `.spec` file next to itself and records the arguments it received.
+ *
+ * @returns {string} Absolute path of the compiled executable.
+ * @throws {Error} `csc.exe` is missing or the compile fails.
  */
 function ensureStubExe() {
   if (compiled && existsSync(compiled) && statSync(compiled).size > 0) return compiled;
@@ -104,12 +115,22 @@ function ensureStubExe() {
 }
 
 /**
- * Writes the shell program the tests spawn. Windows cannot execute a shebang
- * script, so the same behavior is a real executable next to a spec file.
- * @param {string} file
- * @param {string} shellScript
- * @param {{marker?: string, prefix?: string, inside?: string, version?: string, log?: string, logLines?: string, overwriteLog?: string, fileArgs?: string}} [spec]
- * @returns {string}
+ * Writes the stand-in program that tests spawn instead of a real CLI.
+ *
+ * Other platforms write the shell script and mark it executable. Windows cannot execute a shebang script, so the same behavior is a compiled executable. A spec file next to that executable carries the options the stub reads.
+ *
+ * @param {string} file Destination path. On Windows, `.exe` is added when it is missing.
+ * @param {string} shellScript Shell program used when the platform is not Windows.
+ * @param {object} [spec={}] Options written to the Windows spec file. Empty values are omitted.
+ * @param {string} [spec.marker] File the stub touches.
+ * @param {string} [spec.prefix] Text the stub prints before the arguments.
+ * @param {string} [spec.inside] Value compared with `COSPLAYING_INSIDE_HOOK`.
+ * @param {string} [spec.version] Text printed for `--version`.
+ * @param {string} [spec.log] File that receives the argument log.
+ * @param {string} [spec.logLines] When set, each argument is logged on its own line.
+ * @param {string} [spec.overwriteLog] When set, the log is replaced instead of appended.
+ * @param {string} [spec.fileArgs] When set, arguments that are files are copied into the log.
+ * @returns {string} Path of the program the test should execute.
  */
 export function writeSpawnStub(file, shellScript, spec = {}) {
   if (process.platform !== 'win32') {

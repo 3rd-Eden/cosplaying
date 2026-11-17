@@ -10,7 +10,12 @@ const bin = fileURLToPath(new URL('../../cli/bin/cosplaying.js', import.meta.url
 const root = fileURLToPath(new URL('../../..', import.meta.url));
 
 /**
- * @param {string[]} args
+ * Runs the CLI in a fresh temporary home and working directory.
+ *
+ * The test checks the error text. Windows spawn variables are copied when they exist so the process can start.
+ *
+ * @param {string[]} args Arguments after the program name.
+ * @returns {import('node:child_process').SpawnSyncReturns<string>} The CLI result. `stdout` and `stderr` are strings.
  */
 function run(args) {
   const home = mkdtempSync(path.join(tmpdir(), 'cosplaying-home-'));

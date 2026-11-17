@@ -74,7 +74,7 @@ Step-by-step resolution:
 <summary>Example</summary>
 
 ```js
-cosplaying hook --model "Example Model" -- notify --message "text"
+cosplaying hook --model "Example Model" -- git commit -m "Add retry support"
 ```
 
 </details>
@@ -97,7 +97,7 @@ Step-by-step resolution:
 <summary>Example</summary>
 
 ```js
-cosplaying hook --model "Example Model" -- notify --message "text"
+cosplaying hook --model "Example Model" -- git commit -m "Add retry support"
 ```
 
 </details>
@@ -146,7 +146,7 @@ Step-by-step resolution:
 
 ```js
 {
-  "name": "notify"
+  "name": "git"
 }
 ```
 
@@ -171,7 +171,7 @@ Step-by-step resolution:
 
 ```js
 {
-  "name": "notify",
+  "name": "git",
   "version": "1.0.0",
   "type": "module",
   "main": "./index.js"
@@ -198,7 +198,7 @@ Step-by-step resolution:
 <summary>Example</summary>
 
 ```js
-cosplaying plugin uninstall other-notify
+cosplaying plugin uninstall git
 ```
 
 </details>
@@ -221,7 +221,7 @@ Step-by-step resolution:
 <summary>Example</summary>
 
 ```js
-cosplaying plugin install ./examples/notify
+cosplaying plugin install <git-url-or-path>
 ```
 
 </details>
@@ -244,7 +244,7 @@ Step-by-step resolution:
 <summary>Example</summary>
 
 ```js
-export COSPLAYING_NOTIFY_BIN=/usr/local/bin/notify
+export COSPLAYING_GIT_BIN=/usr/bin/git
 ```
 
 </details>
@@ -267,7 +267,7 @@ Step-by-step resolution:
 <summary>Example</summary>
 
 ```js
-export COSPLAYING_NOTIFY_BIN=/usr/local/bin/notify
+export COSPLAYING_GIT_BIN=/usr/bin/git
 ```
 
 </details>
@@ -290,7 +290,7 @@ Step-by-step resolution:
 <summary>Example</summary>
 
 ```js
-export COSPLAYING_NOTIFY_BIN=/usr/local/bin/notify
+export COSPLAYING_GIT_BIN=/usr/bin/git
 ```
 
 </details>
@@ -313,7 +313,7 @@ Step-by-step resolution:
 <summary>Example</summary>
 
 ```js
-cosplaying plugin install ./examples/notify
+cosplaying plugin install <git-url-or-path>
 ```
 
 </details>
@@ -336,7 +336,7 @@ Step-by-step resolution:
 <summary>Example</summary>
 
 ```js
-cosplaying plugin uninstall notify
+cosplaying plugin uninstall git
 ```
 
 </details>
@@ -568,7 +568,7 @@ Step-by-step resolution:
 <summary>Example</summary>
 
 ```js
-cosplaying hook --model "Example" -- notify --message "text"
+cosplaying hook --model "Example" -- git commit -m "Add retry support"
 ```
 
 </details>
@@ -591,7 +591,7 @@ Step-by-step resolution:
 <summary>Example</summary>
 
 ```js
-cosplaying hook --model "Example Model" -- notify --message "text"
+cosplaying hook --model "Example Model" -- git commit -m "Add retry support"
 ```
 
 </details>
@@ -614,7 +614,7 @@ Step-by-step resolution:
 <summary>Example</summary>
 
 ```js
-cosplaying hook --model "Example Model" -- notify --message "text"
+cosplaying hook --model "Example Model" -- git commit -m "Add retry support"
 ```
 
 </details>
@@ -637,7 +637,7 @@ Step-by-step resolution:
 <summary>Example</summary>
 
 ```js
-cosplaying hook --model "Example Model" -- notify --message "text"
+cosplaying hook --model "Example Model" -- git commit -m "Add retry support"
 ```
 
 </details>
@@ -660,7 +660,7 @@ Step-by-step resolution:
 <summary>Example</summary>
 
 ```js
-cosplaying plugin install ./examples/notify
+cosplaying plugin install <git-url-or-path>
 ```
 
 </details>
@@ -683,7 +683,7 @@ Step-by-step resolution:
 <summary>Example</summary>
 
 ```js
-cosplaying rewrite --shell 'notify --list'
+cosplaying rewrite --shell 'git status'
 ```
 
 </details>
@@ -706,7 +706,7 @@ Step-by-step resolution:
 <summary>Example</summary>
 
 ```js
-cosplaying rewrite --model "Example Model" notify --list
+cosplaying rewrite --model "Example Model" git status
 ```
 
 </details>
@@ -730,7 +730,7 @@ Step-by-step resolution:
 
 ```js
 {
-  "plugins": ["notify"],
+  "plugins": ["git"],
   "link": "https://example.com/ai-policy"
 }
 ```
@@ -778,7 +778,7 @@ Step-by-step resolution:
 <summary>Example</summary>
 
 ```js
-cosplaying plugin install ./examples/notify
+cosplaying plugin install <git-url-or-path>
 ```
 
 </details>
@@ -1608,7 +1608,7 @@ Step-by-step resolution:
 <summary>Example</summary>
 
 ```js
-notify --message-file note.md
+gh pr create --body-file note.md
 ```
 
 </details>
@@ -1631,7 +1631,7 @@ Step-by-step resolution:
 <summary>Example</summary>
 
 ```js
-notify --message-file note.md
+gh pr create --body-file note.md
 ```
 
 </details>
@@ -1654,7 +1654,7 @@ Step-by-step resolution:
 <summary>Example</summary>
 
 ```js
-cosplaying plugin install ./examples/notify
+cosplaying plugin install <git-url-or-path>
 ```
 
 </details>
@@ -1677,7 +1677,7 @@ Step-by-step resolution:
 <summary>Example</summary>
 
 ```js
-cosplaying plugin install ./examples/notify
+cosplaying plugin install <git-url-or-path>
 ```
 
 </details>
@@ -1700,7 +1700,7 @@ Step-by-step resolution:
 <summary>Example</summary>
 
 ```js
-cosplaying plugin uninstall notify
+cosplaying plugin uninstall git
 ```
 
 </details>
@@ -1747,7 +1747,7 @@ Step-by-step resolution:
 <summary>Example</summary>
 
 ```js
-cosplaying hook --model "Example" -- notify --message "text"
+cosplaying hook --model "Example" -- git commit -m "Add retry support"
 ```
 
 </details>

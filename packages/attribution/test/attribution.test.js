@@ -1,75 +1,13 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { systemEnv } from '../../cli/test/spawn-stub.js';
-import {
-  annotateMarkdown,
-  renderTrailer,
-  stripAttribution,
-  validateLink,
-} from '../src/index.js';
-
 const bin = fileURLToPath(new URL('../../cli/bin/cosplaying.js', import.meta.url));
 
-const template = 'Authored by {model} via [cosplaying]({link}). AI Assisted text may contain mistakes, please verify.';
-const trailer = '{model} via cosplaying ({link}). AI Assisted text may contain mistakes, please verify.';
-const link = 'https://github.com/3rd-eden/cosplaying';
-
-test('annotateMarkdown adds and replaces one trailing block', () => {
-  const once = annotateMarkdown('Hello', { model: 'Example Model', template, link });
-  assert.match(once, /^Hello\n\n<!-- cosplaying:attribution -->\n/);
-  assert.match(once, /<!-- \/cosplaying:attribution -->\n$/);
-  assert.equal(annotateMarkdown(once, { model: 'Example Model', template, link }), once);
-  assert.equal(stripAttribution(once), 'Hello');
-});
-
-test('an empty body has no leading blank line', () => {
-  const text = annotateMarkdown('', { model: 'Example', template, link });
-  assert.equal(text.startsWith('<!-- cosplaying:attribution -->\n'), true);
-});
-
-test('markdown escapes the model and encodes the link', () => {
-  const text = annotateMarkdown('body', {
-    model: 'Claude *Code*',
-    template,
-    link: 'https://example.com/a(b)',
-  });
-  assert.match(text, /Claude \\\*Code\\\*/);
-  assert.match(text, /https:\/\/example.com\/a%28b%29/);
-});
-
-test('a marker pair that is not trailing stays in the body', () => {
-  const body = 'keep <!-- cosplaying:attribution --> inner <!-- /cosplaying:attribution --> more';
-  assert.equal(stripAttribution(body), body);
-});
-
-test('renderTrailer returns one AI-Assisted-By line', () => {
-  assert.equal(
-    renderTrailer('Example Model', { template: trailer, link }),
-    'AI-Assisted-By: Example Model via cosplaying (https://github.com/3rd-eden/cosplaying). AI Assisted text may contain mistakes, please verify.',
-  );
-});
-
-test('missing model, markers, and multiline trailers throw', () => {
-  assert.throws(() => annotateMarkdown('x', { model: ' ', template, link }), /--model/);
-  const plain = annotateMarkdown('x', { model: 'M', template: 'Hello', link });
-  assert.match(plain, /\nHello\n/);
-  assert.throws(() => annotateMarkdown('x', { model: 'M', template: '{model} <!-- cosplaying:attribution -->', link }), /marker/);
-  assert.throws(() => renderTrailer('M', { template: '{model}\nmore', link }), /single line/);
-  assert.throws(() => renderTrailer('M', { template: '{model} {team}', link, variables: { team: 'a\nb' } }), /single line/);
-  assert.throws(() => validateLink('javascript:alert(1)'), /HTTP/);
-});
-
-test('templates can use declared variables', () => {
-  const text = renderTrailer('M', { template: '{model} {team}', link: '', variables: { team: 'Docs' } });
-  assert.equal(text, 'AI-Assisted-By: M Docs');
-});
-
-test('hook prints markdown markers, escaping, an empty body, and a non-trailing block', () => {
+test('hook renders markdown and trailers and rejects invalid attribution', () => {
   const home = mkdtempSync(path.join(tmpdir(), 'cosplaying-markdown-home-'));
   const cwd = mkdtempSync(path.join(tmpdir(), 'cosplaying-markdown-cwd-'));
   try {
@@ -97,7 +35,7 @@ test('hook prints markdown markers, escaping, an empty body, and a non-trailing 
       "  const text = readFileSync(file, 'utf8');",
       '  let annotated;',
       '  try {',
-      '    annotated = context.attribution.annotateMarkdown(text);',
+      "    annotated = args.includes('--trailer') ? context.attribution.renderTrailer() : context.attribution.annotateMarkdown(text);",
       '  } catch (error) {',
       '    context.stderr.write(String(error.message) + \'\\n\');',
       '    return 2;',
@@ -111,9 +49,7 @@ test('hook prints markdown markers, escaping, an empty body, and a non-trailing 
       link: 'https://example.com/a(b)',
       plugins: [pluginDir],
     })}\n`);
-    const program = path.join(home, 'mdnote');
-    writeFileSync(program, '#!/bin/sh\nprintf "%s\\n" "$@"\n');
-    chmodSync(program, 0o755);
+    const program = path.join(pluginDir, 'index.js');
     const body = path.join(cwd, 'body.md');
     const rendered = 'Authored by Claude \\*Code\\* via [cosplaying](https://example.com/a%28b%29). AI Assisted text may contain mistakes, please verify.';
     const block = `<!-- cosplaying:attribution -->\n${rendered}\n<!-- /cosplaying:attribution -->\n`;
@@ -129,7 +65,6 @@ test('hook prints markdown markers, escaping, an empty body, and a non-trailing 
         cwd,
         encoding: 'utf8',
         env: {
-          ...systemEnv(),
           HOME: home,
           USERPROFILE: home,
           COSPLAYING_MDNOTE_BIN: program,
@@ -143,21 +78,42 @@ test('hook prints markdown markers, escaping, an empty body, and a non-trailing 
 
     const once = attribute('Hello');
     assert.equal(once, `Hello\n\n${block}`);
-    assert.match(once, /^Hello\n\n<!-- cosplaying:attribution -->\n/);
-    assert.match(once, /<!-- \/cosplaying:attribution -->\n$/);
-    assert.match(once, /Claude \\\*Code\\\*/);
-    assert.match(once, /https:\/\/example.com\/a%28b%29/);
     const twice = attribute(once);
     assert.equal(twice, once);
 
     const empty = attribute('');
     assert.equal(empty, block);
-    assert.equal(empty.startsWith('<!-- cosplaying:attribution -->\n'), true);
 
     const kept = 'keep <!-- cosplaying:attribution --> inner <!-- /cosplaying:attribution --> more';
     const inner = attribute(kept);
     assert.equal(inner, `${kept}\n\n${block}`);
-    assert.equal(inner.startsWith(`${kept}\n\n<!-- cosplaying:attribution -->\n`), true);
+
+    const cases = [
+      { mode: '--trailer', model: 'Example Model', config: {}, text: 'AI-Assisted-By: Example Model via cosplaying (https://github.com/3rd-eden/cosplaying). AI Assisted text may contain mistakes, please verify.' },
+      { mode: '--trailer', model: 'M', config: { link: '', variables: { team: 'Docs' }, attribution: { templates: { trailer: '{model} {team}' } } }, text: 'AI-Assisted-By: M Docs' },
+      { model: 'M', config: { attribution: { templates: { markdown: 'Hello' } } }, text: `${kept}\n\n<!-- cosplaying:attribution -->\nHello\n<!-- /cosplaying:attribution -->\n` },
+      { config: {}, error: /--model/ },
+      { model: 'M', config: { attribution: { templates: { markdown: '{model} <!-- cosplaying:attribution -->' } } }, error: /marker/ },
+      { mode: '--trailer', model: 'M', config: { attribution: { templates: { trailer: '{model}\nmore' } } }, error: /single line/ },
+      { mode: '--trailer', model: 'M', config: { variables: { team: 'a\nb' }, attribution: { templates: { trailer: '{model} {team}' } } }, error: /single line/ },
+      { model: 'M', config: { link: 'javascript:alert(1)' }, error: /HTTP/ },
+    ];
+    for (const item of cases) {
+      writeFileSync(path.join(cwd, '.cosplaying.json'), JSON.stringify({ plugins: [pluginDir], ...item.config }));
+      const result = spawnSync(process.execPath, [bin, 'hook', ...(item.model ? ['--model', item.model] : []), '--', 'mdnote', '--file', body, ...(item.mode ? [item.mode] : [])], {
+        cwd, encoding: 'utf8', env: { HOME: home, USERPROFILE: home, COSPLAYING_MDNOTE_BIN: program },
+      });
+      if (item.error) {
+        assert.equal(result.status, 2, result.stderr);
+        assert.equal(result.stdout, '');
+        assert.match(result.stderr, item.error);
+      } else {
+        assert.equal(result.status, 0, result.stderr);
+        assert.equal(result.stderr, '');
+        assert.equal(result.stdout, item.text);
+      }
+      assert.equal(readFileSync(body, 'utf8'), kept);
+    }
   } finally {
     rmSync(home, { recursive: true, force: true });
     rmSync(cwd, { recursive: true, force: true });

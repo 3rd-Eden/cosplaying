@@ -6,18 +6,12 @@ import { readJsonConfig } from 'cosplaying/hooks';
 import { adapters, getAdapter } from 'cosplaying/adapters';
 
 /**
- * @param {string} id
- * @returns {import('cosplaying/adapters').Harness}
- */
-function requireAdapter(id) {
-  const found = getAdapter(id);
-  if (!found) throw new Error(`Unknown harness: ${id}`);
-  return found;
-}
-
-/**
- * @param {string} start
- * @returns {string | undefined}
+ * Finds the Git working tree that contains a directory.
+ *
+ * Project hooks are installed at that root. A directory that is not inside a repository has no project scope.
+ *
+ * @param {string} start Directory where the search starts. An empty string uses the process working directory.
+ * @returns {string | undefined} Directory that contains `.git`. `undefined` when no `.git` is found.
  */
 export function gitRoot(start) {
   const found = findUpSync('.git', { cwd: start || process.cwd(), type: 'both' });
@@ -25,26 +19,48 @@ export function gitRoot(start) {
 }
 
 /**
- * @param {string} id
- * @param {object} options
- * @returns {string}
+ * Installs hooks for one harness.
+ *
+ * The adapter writes its settings file or extension. A failure is thrown to the caller.
+ *
+ * @param {string} id Harness id, for example `codex`.
+ * @param {object} options Location and command text passed to the adapter `install` method.
+ * @param {string} options.home User home directory.
+ * @param {NodeJS.ProcessEnv} [options.env] Environment used by harnesses that override their config root.
+ * @param {string} [options.projectDir] Project directory. When set, project hooks are written.
+ * @param {NodeJS.Platform} [options.platform] Platform used to quote hook commands.
+ * @param {string} [options.bin] `cosplaying` executable embedded in hook commands.
+ * @param {string[]} [options.commands] Plugin command names embedded in extension harnesses.
+ * @returns {string} Path of the file the adapter updated.
  */
 export function installHarness(id, options) {
-  return requireAdapter(id).install(options);
+  return getAdapter(id).install(options);
 }
 
 /**
- * @param {string} id
- * @param {object} options
- * @returns {string}
+ * Removes hooks for one harness.
+ *
+ * Only entries that contain the harness marker are removed. An unmarked Pi or OpenCode file is left in place.
+ *
+ * @param {string} id Harness id, for example `pi`.
+ * @param {object} options Location passed to the adapter `uninstall` method.
+ * @param {string} options.home User home directory.
+ * @param {NodeJS.ProcessEnv} [options.env] Environment used by harnesses that override their config root.
+ * @param {string} [options.projectDir] Project directory. When set, project hooks are removed.
+ * @returns {string} Path of the file the adapter updated.
  */
 export function uninstallHarness(id, options) {
-  return requireAdapter(id).uninstall(options);
+  return getAdapter(id).uninstall(options);
 }
 
 /**
- * @param {string} file
- * @returns {string | null}
+ * Reads a hook file so install can tell whether the bytes changed.
+ *
+ * A missing file is not an error. The caller compares the text before and after the write.
+ *
+ * @param {string} file Hook file path.
+ * @returns {string | null} File text. Null when the file does not exist.
+ * @throws {Error} The file exists and cannot be read.
  */
 function readOptional(file) {
   try {
@@ -56,17 +72,19 @@ function readOptional(file) {
 }
 
 /**
- * Installs or removes one harness. A failure is returned so the next harness still runs.
- * `changed` is false when the file bytes are unchanged, which is when writeJsonAtomic skips the write.
- * @param {string} id
- * @param {object} options
- * @param {boolean} remove
- * @returns {{harness: string, file: string, ok: boolean, changed: boolean, error?: unknown}}
+ * Installs or removes one harness and records whether the file changed.
+ *
+ * A failure is returned so the next harness still runs. `changed` is false when the file bytes are unchanged, which is when the atomic JSON write skips the write.
+ *
+ * @param {string} id Harness id.
+ * @param {object} options Location and command text passed to the adapter.
+ * @param {boolean} remove True to uninstall. False to install.
+ * @returns {{harness: string, file: string, ok: boolean, changed: boolean, error?: unknown}} The harness id, the file path, whether the operation succeeded, whether the bytes changed, and the error when it failed.
  */
 function applyHarness(id, options, remove) {
   let file = '';
   try {
-    const harness = requireAdapter(id);
+    const harness = getAdapter(id);
     file = harness.file(options);
     const before = readOptional(file);
     if (remove) harness.uninstall(options);
@@ -79,30 +97,42 @@ function applyHarness(id, options, remove) {
 }
 
 /**
- * @param {object} options
- * @param {string[]} [harnesses]
- * @returns {Array<{harness: string, file: string, ok: boolean, changed: boolean, error?: unknown}>}
+ * Installs hooks for each requested harness.
+ *
+ * One failure does not stop the others. The caller prints each result.
+ *
+ * @param {object} options Location and command text passed to every adapter.
+ * @param {string[]} [harnesses] Harness ids to install. The default is every adapter.
+ * @returns {Array<{harness: string, file: string, ok: boolean, changed: boolean, error?: unknown}>} One result per id, in the same order.
  */
 export function installAll(options, harnesses = adapters.map((item) => item.id)) {
   return harnesses.map((id) => applyHarness(id, options, false));
 }
 
 /**
- * @param {object} options
- * @param {string[]} [harnesses]
- * @returns {Array<{harness: string, file: string, ok: boolean, changed: boolean, error?: unknown}>}
+ * Removes hooks for each requested harness.
+ *
+ * One failure does not stop the others. Owned entries are removed. Foreign hooks stay.
+ *
+ * @param {object} options Location passed to every adapter.
+ * @param {string[]} [harnesses] Harness ids to remove. The default is every adapter.
+ * @returns {Array<{harness: string, file: string, ok: boolean, changed: boolean, error?: unknown}>} One result per id, in the same order.
  */
 export function uninstallAll(options, harnesses = adapters.map((item) => item.id)) {
   return harnesses.map((id) => applyHarness(id, options, true));
 }
 
 /**
- * @param {import('cosplaying/adapters').Harness} harness
- * @param {unknown} value
- * @returns {string[]}
+ * Collects the shell commands registered on a harness's pre-tool event.
+ *
+ * Hook order is checked on that event because a later command can remove the cosplaying prefix before the tool runs.
+ *
+ * @param {import('cosplaying/adapters').Harness} harness Adapter whose pre-tool event name is used.
+ * @param {unknown} value Parsed settings object. A missing or non-object `hooks` value yields no commands.
+ * @returns {string[]} Command strings from that event, including commands nested in hook groups.
  */
 function preToolCommands(harness, value) {
-  if (!value || typeof value !== 'object' || !('hooks' in value) || !value.hooks || typeof value.hooks !== 'object') return [];
+  if (!value.hooks || typeof value.hooks !== 'object') return [];
   /** @type {string[]} */
   const commands = [];
   for (const [event, entries] of Object.entries(value.hooks)) {
@@ -113,8 +143,13 @@ function preToolCommands(harness, value) {
 }
 
 /**
- * @param {unknown} entry
- * @param {string[]} commands
+ * Appends command strings from one hook entry, including nested hook groups.
+ *
+ * Claude-shaped groups store the command inside `hooks`. Cursor stores it on the entry itself. Both shapes are collected.
+ *
+ * @param {unknown} entry One hook entry or hook group.
+ * @param {string[]} commands Destination list. Matching `command`, `bash`, and `powershell` strings are appended.
+ * @returns {void} No value. `commands` is updated in place.
  */
 function collectCommands(entry, commands) {
   if (!entry || typeof entry !== 'object') return;
@@ -127,8 +162,14 @@ function collectCommands(entry, commands) {
 }
 
 /**
+ * Lists the user scope and, when one exists, the project scope.
+ *
+ * Both scopes can contain hooks that run in one agent session. Order repair checks each of them.
+ *
  * @param {object} options
- * @returns {{projectDir?: string}[]}
+ * @param {string} [options.projectDir] Explicit project directory. It is used instead of searching for a Git root.
+ * @param {string} [options.cwd] Directory used to find a Git root when `projectDir` is omitted.
+ * @returns {Array<{projectDir?: string}>} The user scope, then the project scope when a project directory is known.
  */
 function scopesFor(options) {
   const project = options.projectDir || gitRoot(options.cwd);
@@ -136,8 +177,12 @@ function scopesFor(options) {
 }
 
 /**
- * @param {object} options
- * @returns {Array<{name: string, members: Array<{harness: string, file: string, projectDir?: string}>}>}
+ * Lists the hook chains whose order must be checked.
+ *
+ * A harness that also runs another harness, such as Cursor with Claude Code, is one chain. Each JSON harness is also checked alone. Extension harnesses are not part of these JSON chains.
+ *
+ * @param {object} options Location used to resolve each hook file. See {@link scopesFor}.
+ * @returns {Array<{name: string, members: Array<{harness: string, file: string, projectDir?: string}>}>} Chains in user scope and project scope. `name` identifies the chain. `members` are the files in run order.
  */
 function chainsFor(options) {
   /** @type {Array<{name: string, members: Array<{harness: string, file: string, projectDir?: string}>}>} */
@@ -146,7 +191,7 @@ function chainsFor(options) {
     const member = (id) => ({
       harness: id,
       projectDir: scope.projectDir,
-      file: requireAdapter(id).file({ ...options, projectDir: scope.projectDir }),
+      file: getAdapter(id).file({ ...options, projectDir: scope.projectDir }),
     });
     for (const harness of adapters) {
       const extra = harness.alsoRuns();
@@ -165,20 +210,28 @@ function chainsFor(options) {
 }
 
 /**
- * @param {{harness: string, command: string}} item
- * @returns {'ours' | 'rtk' | 'unverified' | 'other'}
+ * Classifies one pre-tool command for the hook-order check.
+ *
+ * An owned command contains the harness marker. An `rtk hook` command that runs later can strip the prefix and must be repaired. A cosplaying command without the marker is left unchanged because it may not be this install.
+ *
+ * @param {{harness: string, command: string}} item Harness id and one pre-tool command string.
+ * @returns {'ours' | 'rtk' | 'unverified' | 'other'} `ours` for a marked command, `rtk` for an rtk hook, `unverified` for a cosplaying command without the marker, and `other` for every remaining command.
  */
 function classify(item) {
   const harness = getAdapter(item.harness);
-  if (harness && item.command.includes(harness.marker())) return 'ours';
+  if (item.command.includes(harness.marker())) return 'ours';
   if (/\brtk\s+hook\b/.test(item.command)) return 'rtk';
   if (/\b(?:cosplaying(?:\.js)?|main\.js)\b/.test(item.command) && /\bagent-hook\b/.test(item.command)) return 'unverified';
   return 'other';
 }
 
 /**
- * @param {Array<{harness: string, file: string, projectDir?: string}>} members
- * @returns {{items: object[], failures: object[]}}
+ * Reads the pre-tool commands in one hook chain.
+ *
+ * A file that cannot be parsed is recorded as a failure and does not stop the other files in the chain.
+ *
+ * @param {Array<{harness: string, file: string, projectDir?: string}>} members Chain members in the order the hooks run.
+ * @returns {{items: object[], failures: object[]}} `items` are the pre-tool commands that were read. `failures` are files that could not be read, with `file`, `harness`, `projectDir`, and `message`.
  */
 function inspectChain(members) {
   /** @type {object[]} */
@@ -190,7 +243,6 @@ function inspectChain(members) {
     try {
       value = readJsonConfig(member.file);
     } catch (error) {
-      if (error.code === 'ENOENT') continue;
       failures.push({
         file: member.file,
         harness: member.harness,
@@ -200,7 +252,6 @@ function inspectChain(members) {
       continue;
     }
     const harness = getAdapter(member.harness);
-    if (!harness) continue;
     for (const command of preToolCommands(harness, value)) {
       items.push({ ...member, command });
     }
@@ -209,8 +260,12 @@ function inspectChain(members) {
 }
 
 /**
- * @param {object[]} items
- * @returns {object[]}
+ * Finds pre-tool commands that run after the last owned cosplaying hook.
+ *
+ * `rtk` in that position can remove the prefix, so the command is an issue that repair can move. An unverified cosplaying command in that position is reported and is not rewritten.
+ *
+ * @param {object[]} items Pre-tool commands in run order. Each item has `harness`, `file`, and `command`.
+ * @returns {object[]} Items after the last owned hook that are `rtk` or `unverified`. Each item includes `kind` and `message`.
  */
 function issuesIn(items) {
   let lastOurs = -1;
@@ -242,10 +297,17 @@ function issuesIn(items) {
 }
 
 /**
- * Moves owned hooks back to the end of a file when rtk was appended later.
- * Lookalike commands and unreadable files are reported and left unchanged.
- * @param {object} options
- * @returns {{repaired: string[], conflicts: object[], failures: object[]}}
+ * Moves owned hooks back to the end of a file when `rtk` was appended later.
+ *
+ * The cosplaying hook must run last so `rtk` cannot remove its prefix. A command that looks like cosplaying but has no marker is reported and left unchanged. A file that cannot be read is reported and left unchanged.
+ *
+ * @param {object} options Location used to find user and project hook files.
+ * @param {string} [options.home] User home directory.
+ * @param {string} [options.cwd] Directory used to find a Git root.
+ * @param {string} [options.projectDir] Explicit project directory.
+ * @param {NodeJS.ProcessEnv} [options.env] Environment passed through to install.
+ * @param {string[]} [options.commands] Plugin commands passed through when a harness is reinstalled.
+ * @returns {{repaired: string[], conflicts: object[], failures: object[]}} `repaired` lists files that were rewritten. `conflicts` are commands that still run after the owned hook. `failures` are files that could not be read or rewritten.
  */
 export function repairHookOrder(options) {
   /** @type {string[]} */
@@ -286,8 +348,12 @@ export function repairHookOrder(options) {
 }
 
 /**
- * @param {object[]} items
- * @returns {object[]}
+ * Drops repeated order-check issues.
+ *
+ * One file can appear in more than one chain. The report names each file and message once.
+ *
+ * @param {object[]} items Issues or failures. Each item may have `kind`, `file`, and `message`.
+ * @returns {object[]} The first item for each `kind`, `file`, and `message` combination, in the original order.
  */
 function uniqueIssues(items) {
   const seen = new Set();

@@ -34,8 +34,13 @@ const defaults = {
 };
 
 /**
- * @param {Record<string, unknown>} base
- * @param {Record<string, unknown>} overlay
+ * Combines two settings objects.
+ *
+ * Later settings replace earlier ones. `variables` is merged by key so a project file can add a variable without deleting the user variables.
+ *
+ * @param {Record<string, unknown>} base Defaults or the settings already loaded.
+ * @param {Record<string, unknown>} overlay Settings from the next file. Its keys win, except that `variables` is combined.
+ * @returns {Record<string, unknown>} Combined settings. `variables` contains keys from both objects.
  */
 function merge(base, overlay) {
   return {
@@ -46,9 +51,12 @@ function merge(base, overlay) {
 }
 
 /**
- * Map the public settings names to the flat values used by the CLI.
- * @param {unknown} config
- * @returns {Record<string, unknown>}
+ * Maps the public settings names onto the flat fields the CLI reads.
+ *
+ * The file may use `attribution.link` and `attribution.templates`. Older files may use `link` and `attribution.template`. Fields that are absent stay absent so the defaults remain.
+ *
+ * @param {unknown} config Parsed settings object. A missing value is treated as an empty object.
+ * @returns {Record<string, unknown>} Flat settings. Keys are `link`, `markdown`, `trailer`, `session`, `plugins`, and `variables`, and only keys that were set are present.
  */
 function normalize(config) {
   const file = config ?? {};
@@ -65,15 +73,17 @@ function normalize(config) {
 }
 
 /**
- * @param {string} file
- * @param {unknown} config
+ * Rejects a settings file that tries to name the model.
+ *
+ * The model comes from `--model`, `--model-base64`, or `COSPLAYING_MODEL`. A file must not supply it, or a later session would attribute the wrong model.
+ *
+ * @param {string} file Path of the settings file that was loaded.
+ * @param {unknown} config Parsed contents of that file.
+ * @returns {void} No value when neither `model` nor `attribution.model` is present.
+ * @throws {CosplayError} The file sets `model` or `attribution.model`.
  */
 function rejectConfigModel(file, config) {
-  if (!config || typeof config !== 'object' || Array.isArray(config)) return;
-  const attribution = /** @type {Record<string, unknown>} */ (config).attribution;
-  const nested = attribution && typeof attribution === 'object' && !Array.isArray(attribution)
-    && Object.hasOwn(attribution, 'model');
-  if (!Object.hasOwn(config, 'model') && !nested) return;
+  if (!Object.hasOwn(config ?? {}, 'model') && !Object.hasOwn(config?.attribution ?? {}, 'model')) return;
   throw new CosplayError({
     name: 'cli',
     method: 'loadConfig',
@@ -83,9 +93,14 @@ function rejectConfigModel(file, config) {
 }
 
 /**
- * @param {import('cosmiconfig').PublicExplorerSync} explorer
- * @param {string} directory
- * @returns {import('cosmiconfig').CosmiconfigResult}
+ * Searches one directory for a cosplaying settings file.
+ *
+ * The cache is cleared first so a test or a second command sees the file that is on disk now.
+ *
+ * @param {import('cosmiconfig').PublicExplorerSync} explorer Cosmiconfig explorer for the project walk or the user directory.
+ * @param {string} directory Directory where the search starts.
+ * @returns {import('cosmiconfig').CosmiconfigResult} The loaded file, or null when no settings file is found.
+ * @throws {CosplayError} The file exists but the JSON or YAML cannot be parsed.
  */
 function searchConfig(explorer, directory) {
   explorer.clearCaches();
@@ -105,8 +120,14 @@ function searchConfig(explorer, directory) {
 }
 
 /**
- * @param {import('cosmiconfig').PublicExplorerSync} explorer
- * @param {string} directory
+ * Loads one settings file and returns the flat fields the CLI uses.
+ *
+ * A missing file contributes nothing. A file that sets the model is rejected before its other fields are used.
+ *
+ * @param {import('cosmiconfig').PublicExplorerSync} explorer Cosmiconfig explorer for the project walk or the user directory.
+ * @param {string} directory Directory where the search starts.
+ * @returns {Record<string, unknown>} Flat settings from that file. An empty object when no file is found.
+ * @throws {CosplayError} The file cannot be parsed, or it sets the model.
  */
 function read(explorer, directory) {
   const found = searchConfig(explorer, directory);
@@ -116,42 +137,61 @@ function read(explorer, directory) {
 }
 
 /**
- * The project settings file cosmiconfig would load, including its raw contents.
- * @param {{cwd?: string}} [options]
- * @returns {import('cosmiconfig').CosmiconfigResult}
+ * Finds the project settings file that cosmiconfig would load.
+ *
+ * Enable and disable read this result so they can see the raw `plugins` list. The search walks parent directories from `cwd`.
+ *
+ * @param {object} [options]
+ * @param {string} [options.cwd=process.cwd()] Directory where the project search starts.
+ * @returns {import('cosmiconfig').CosmiconfigResult} The file path and its parsed contents, or null when no project file exists.
+ * @throws {CosplayError} A settings file on the walk cannot be parsed.
  */
 export function findProjectConfig({ cwd = process.cwd() } = {}) {
-  const found = searchConfig(projectConfig, cwd);
-  if (!found) return null;
-  return found;
+  return searchConfig(projectConfig, cwd);
 }
 
 /**
- * The user settings file cosmiconfig would load, including its raw contents.
- * @param {{home?: string}} [options]
- * @returns {import('cosmiconfig').CosmiconfigResult}
+ * Finds the user settings file that cosmiconfig would load.
+ *
+ * The search does not walk parent directories. It looks only in the user config directory.
+ *
+ * @param {object} [options]
+ * @param {string} [options.home=homedir()] Home directory. Tests pass a temporary home.
+ * @returns {import('cosmiconfig').CosmiconfigResult} The file path and its parsed contents, or null when no user file exists.
+ * @throws {CosplayError} The user settings file cannot be parsed.
  */
 export function findUserConfig({ home = homedir() } = {}) {
   return searchConfig(userConfig, userConfigDirectory({ home }));
 }
 
 /**
- * Directory for the user config file and Claude session model files.
- * @param {{home?: string}} [options]
- * @returns {string}
+ * Returns the directory that holds the user settings file and the session model files.
+ *
+ * The path is under the supplied home. Tests inject `home` so this process does not read the developer home. There is no separate platform matrix.
+ *
+ * @param {object} [options]
+ * @param {string} [options.home=homedir()] Home directory. Tests pass a temporary home.
+ * @returns {string} `<home>/.config/cosplaying`.
  */
 export function userConfigDirectory({ home = homedir() } = {}) {
   return path.join(home, '.config', 'cosplaying');
 }
 
 /**
- * @param {{cwd?: string, home?: string}} [options]
+ * Loads the settings that attribution and plugin selection use.
+ *
+ * Defaults are applied first, then the user file, then the project file. A project value replaces a user value. `variables` are merged by key.
+ *
+ * @param {object} [options]
+ * @param {string} [options.cwd=process.cwd()] Directory where the project search starts.
+ * @param {string} [options.home=homedir()] Home directory used to find the user file.
+ * @returns {{markdown: string, trailer: string, link: string, plugins: string[], variables: Record<string, string>, session?: string}} Effective settings. `session` is present only when a file sets it.
+ * @throws {CosplayError} A settings file cannot be parsed, or a file sets the model.
  */
 export function loadConfig({ cwd = process.cwd(), home = homedir() } = {}) {
-  const merged = [
+  return [
     defaults,
     read(userConfig, userConfigDirectory({ home })),
     read(projectConfig, cwd),
   ].reduce(merge);
-  return merged;
 }

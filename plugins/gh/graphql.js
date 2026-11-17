@@ -78,11 +78,13 @@ const GRAPHQL_TRAILER_MUTATIONS = new Map([
 ]);
 
 /**
- * Finds a supported GraphQL mutation and its attributed input fields.
- * @param {string} query - GraphQL query text.
- * @returns {{name: string, fields?: string[], allowedFields?: string[], variables?: Array<{field: string, variable: string}>, inputVariable?: string, trailerRule?: object, identityOnly?: boolean} | null} Mutation details, or null for a read or untracked action.
- * @throws {CosplayError} If a GraphQL mutation is not safely allowlisted.
- * @private
+ * Identifies one supported GraphQL mutation and the fields that may carry text.
+ *
+ * A query or an action such as resolving a review thread returns null and is left unchanged. A mutation with no attribution rule is refused. The document must contain one operation and one mutation field. Text fields must be GraphQL variables so the values can be replaced without rewriting the query text.
+ *
+ * @param {string} query GraphQL document from `-f query=` or from a JSON input file.
+ * @returns {{name: string, fields?: string[], allowedFields?: string[], variables?: Array<{field: string, variable: string}>, inputVariable?: string, trailerRule?: object, identityOnly?: boolean} | null} Mutation name and the fields to attribute. `identityOnly` means the call is allowed once a model exists but no text field changes. Null for a read or an untracked action. A parse error also returns null.
+ * @throws {CosplayError} The document has more than one operation, the mutation is not allowlisted, or the input shape cannot be attributed.
  */
 function graphqlMutation(query) {
   let document;
@@ -141,12 +143,14 @@ function graphqlMutation(query) {
 }
 
 /**
- * Reads a GraphQL field value, including `-F key=@file` values.
- * @param {{flag: string, value?: string}} occurrence - Parsed field occurrence.
- * @param {function(): string} readStdin - Cached stdin reader.
- * @returns {{text: string, fromFile: boolean, file?: string}} Field text and source metadata.
- * @throws {CosplayError} If the value is missing or its file cannot be read.
- * @private
+ * Reads a GraphQL field value, including a `-F key=@file` value.
+ *
+ * An `@file` value is read from that path. `-` uses stdin. A plain value is the text after `=`.
+ *
+ * @param {{flag: string, value?: string}} occurrence Parsed field flag. `value` is the `key=...` text.
+ * @param {function(): string} readStdin Cached stdin reader used when the file path is `-`.
+ * @returns {{text: string, fromFile: boolean, file?: string}} Field text. `fromFile` is true for an `@file` value. `file` is that path.
+ * @throws {CosplayError} The flag has no value, or the `@file` path cannot be read.
  */
 function readGraphqlField(occurrence, readStdin) {
   if (occurrence.value === undefined) throw ghError(`${occurrence.flag} needs a value. Pass key=<value> after the flag or as "${occurrence.flag}=key=<value>".`);
@@ -159,14 +163,17 @@ function readGraphqlField(occurrence, readStdin) {
 }
 
 /**
- * Adds attribution to the approved text fields in a GraphQL input object.
- * @param {Record<string, unknown>} input - GraphQL input variables.
- * @param {object} mutation - Mutation rule returned by {@link graphqlMutation}.
- * @param {{model: string, template: string, link: string | undefined}} config - Current attribution settings.
- * @param {string} [trailer] - Rendered Git trailer for commit mutations.
- * @returns {boolean} Whether an input field changed.
- * @throws {CosplayError} If the input contains unsupported text fields or invalid values.
- * @private
+ * Adds attribution to the approved text fields of one GraphQL input object.
+ *
+ * Markdown fields are passed through the byline helper. A commit-message field receives the Git trailer. Review comments and threads on `addPullRequestReview` are attributed one body at a time. The object is updated in place.
+ *
+ * @param {Record<string, unknown>} input GraphQL `input` object. Fields are replaced in this object.
+ * @param {object} mutation Rule from {@link graphqlMutation}. `fields`, `allowedFields`, `name`, and `trailerRule` select the edits.
+ * @param {object} context Hook context.
+ * @param {{annotateMarkdown: function(string): string}} context.attribution Helper that appends the Markdown byline.
+ * @param {string} [trailer] Rendered `AI-Assisted-By` line for a commit mutation. Omitted for Markdown mutations.
+ * @returns {boolean} True when a field was rewritten.
+ * @throws {CosplayError} The input contains a text field this mutation does not allow, or a value is not the expected string, array, or object.
  */
 function annotateGraphqlInput(input, mutation, context, trailer) {
   const unsupported = Object.keys(input).find((field) => GRAPHQL_TEXT_FIELDS.has(field) && !mutation.allowedFields.includes(field));
@@ -215,18 +222,18 @@ function annotateGraphqlInput(input, mutation, context, trailer) {
 }
 
 /**
- * Rewrites an attributed GraphQL text mutation.
- * @param {string[]} inputArgs - Original gh api arguments.
- * @param {object} options - Parsed command and injected I/O settings.
- * @param {Record<string, string | undefined>} options.env - Environment variables used for attribution config.
- * @param {string} options.cwd - Working directory used to find project config.
- * @param {string} [options.home] - Home directory override for user config.
- * @param {string} [options.platform] - Platform override for user config paths.
- * @param {ReturnType<typeof createTempFiles>} options.tempFiles - Temporary file manager for rewritten inputs.
- * @param {function(): string} options.readStdin - Cached stdin reader.
- * @returns {{args: string[], changed: boolean}} Prepared arguments and whether a rewrite occurred.
- * @throws {CosplayError} If the mutation or body input cannot be attributed safely.
- * @private
+ * Rewrites a `gh api graphql` request so an allowlisted mutation carries attribution.
+ *
+ * Field form and one `--input` JSON file are accepted, and they must not be combined. A read is unchanged except that stdin is copied to a file. An identity-only mutation is checked for a model and otherwise unchanged. A text mutation rewrites the variable values. Stdin input is always copied so `gh` can read a path.
+ *
+ * @param {string[]} inputArgs Original `gh api` arguments. This array is not mutated.
+ * @param {object} tools Helpers for this rewrite.
+ * @param {object} tools.context Hook context.
+ * @param {{annotateMarkdown: function(string): string, renderTrailer: function(): string}} tools.context.attribution Attribution helpers.
+ * @param {{write: function(string, string=): string}} tools.tempFiles Writer for rewritten JSON or GraphQL files.
+ * @param {function(): string} tools.readStdin Cached stdin reader.
+ * @returns {{args: string[], changed: boolean}} Arguments to spawn, and whether a value was rewritten or copied off stdin.
+ * @throws {CosplayError} The mutation or its text cannot be attributed safely.
  */
 export function rewriteGraphqlArgs(inputArgs, { context, tempFiles, readStdin }) {
   const args = [...inputArgs];
