@@ -85,6 +85,24 @@ test('a write without a model does not run gh, and a read does', () => {
   assert.match(readFileSync(context.log, 'utf8'), /pr\nview\n1/);
 });
 
+test('workflow and job rerun APIs pass through without content', () => {
+  const context = fixture();
+  const cliRerun = run(['hook', '--model', 'Example', '--', 'gh', 'run', 'rerun', '42'], context);
+  assert.equal(cliRerun.status, 0, cliRerun.stderr);
+  assert.match(readFileSync(context.log, 'utf8'), /run\nrerun\n42/);
+
+  const endpoints = [
+    'repos/owner/repo/actions/runs/42/rerun',
+    'repos/owner/repo/actions/runs/42/rerun-failed-jobs',
+    'repos/owner/repo/actions/jobs/7/rerun',
+  ];
+  for (const endpoint of endpoints) {
+    const rerun = run(['hook', '--model', 'Example', '--', 'gh', 'api', '--method', 'POST', endpoint], context);
+    assert.equal(rerun.status, 0, rerun.stderr);
+    assert.match(readFileSync(context.log, 'utf8'), new RegExp(endpoint.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+  }
+});
+
 test('an unsupported gh api mutation does not run gh', () => {
   const context = fixture();
   const blocked = run(['hook', '--model', 'Example', '--', 'gh', 'api', '--method', 'POST', 'repos/owner/name/dispatches'], context);
