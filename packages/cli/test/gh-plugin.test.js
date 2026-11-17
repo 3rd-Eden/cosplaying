@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdtempSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
+import { writeSpawnStub } from './spawn-stub.js';
 
 const bin = fileURLToPath(new URL('../bin/cosplaying.js', import.meta.url));
 
@@ -18,7 +19,7 @@ function fixture() {
   const log = path.join(home, 'gh-log');
   mkdirSync(binDir);
   const script = path.join(binDir, 'gh');
-  writeFileSync(script, `#!/bin/sh
+  const shell = `#!/bin/sh
 printf '%s\\n' "$@" > "$GH_LOG"
 for arg in "$@"; do
   if [ -f "$arg" ]; then
@@ -27,8 +28,13 @@ for arg in "$@"; do
   fi
 done
 exit 0
-`);
-  chmodSync(script, 0o755);
+`;
+  const ghBin = writeSpawnStub(script, shell, {
+    log,
+    logLines: 'true',
+    overwriteLog: 'true',
+    fileArgs: 'true',
+  });
   writeFileSync(path.join(cwd, '.cosplaying.json'), `${JSON.stringify({ plugins: ['gh'] })}\n`);
   return {
     home,
@@ -39,6 +45,7 @@ exit 0
       USERPROFILE: home,
       PATH: `${binDir}${path.delimiter}${process.env.PATH || '/usr/bin:/bin'}`,
       GH_LOG: log,
+      COSPLAYING_GH_BIN: ghBin,
     },
   };
 }
