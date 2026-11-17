@@ -1,5 +1,7 @@
 # cosplaying
 
+![COSPLAY banner showing AI attribution across a plugin ecosystem](assets/cosplay-banner.png)
+
 `cosplaying` adds a visible byline when a coding agent publishes text through a wrapped CLI. The byline names the model and points at a link you choose. It is a label a person can read. It does not prove who typed the text, and it is not a cryptographic watermark.
 
 The markdown block is a visible disclosure a deployer can use when EU AI Act Article 50(4) applies. This package does not decide whether a particular comment or commit is in scope. The `AI-Assisted-By` trailer is a structured line Git can store. It is not a provider's Article 50(2) machine-readable marking solution, and this project does not claim Article 50(2) compliance.
