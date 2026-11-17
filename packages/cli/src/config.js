@@ -5,7 +5,7 @@ import { homedir } from 'node:os';
 import path from 'node:path';
 
 /** @type {string} */
-export const DEFAULT_LINK = 'https://www.npmjs.com/package/cosplaying';
+export const DEFAULT_LINK = 'https://github.com/3rd-eden/cosplaying';
 
 /** @type {string} */
 export const DEFAULT_MARKDOWN = 'Authored by {model} via [cosplaying]({link}). AI Assisted text may contain mistakes, please verify.';

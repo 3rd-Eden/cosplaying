@@ -17,7 +17,7 @@ const bin = fileURLToPath(new URL('../../cli/bin/cosplaying.js', import.meta.url
 
 const template = 'Authored by {model} via [cosplaying]({link}). AI Assisted text may contain mistakes, please verify.';
 const trailer = '{model} via cosplaying ({link}). AI Assisted text may contain mistakes, please verify.';
-const link = 'https://www.npmjs.com/package/cosplaying';
+const link = 'https://github.com/3rd-eden/cosplaying';
 
 test('annotateMarkdown adds and replaces one trailing block', () => {
   const once = annotateMarkdown('Hello', { model: 'Example Model', template, link });
@@ -50,7 +50,7 @@ test('a marker pair that is not trailing stays in the body', () => {
 test('renderTrailer returns one AI-Assisted-By line', () => {
   assert.equal(
     renderTrailer('Example Model', { template: trailer, link }),
-    'AI-Assisted-By: Example Model via cosplaying (https://www.npmjs.com/package/cosplaying). AI Assisted text may contain mistakes, please verify.',
+    'AI-Assisted-By: Example Model via cosplaying (https://github.com/3rd-eden/cosplaying). AI Assisted text may contain mistakes, please verify.',
   );
 });
 

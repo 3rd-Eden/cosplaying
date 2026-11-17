@@ -96,7 +96,7 @@ Two of `.cosplaying.json`, `.cosplaying.yaml`, and `.cosplaying.yml` in the same
 }
 ```
 
-The default markdown line is `Authored by {model} via [cosplaying]({link}). AI Assisted text may contain mistakes, please verify.` The default trailer value is `{model} via cosplaying ({link}). AI Assisted text may contain mistakes, please verify.` The default link is `https://www.npmjs.com/package/cosplaying`.
+The default markdown line is `Authored by {model} via [cosplaying]({link}). AI Assisted text may contain mistakes, please verify.` The default trailer value is `{model} via cosplaying ({link}). AI Assisted text may contain mistakes, please verify.` The default link is `https://github.com/3rd-eden/cosplaying`.
 
 Session text tells the model to write authored text in ASD-STE100 Simplified Technical English and to route supported plugin commands through this CLI.
 
