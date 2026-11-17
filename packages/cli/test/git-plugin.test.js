@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -142,4 +142,181 @@ test('push blocks an unattributed local commit when a model is set', () => {
   const allowed = run(['hook', '--', 'git', 'push', '--quiet'], fixture);
   assert.equal(allowed.status, 0, allowed.stderr);
   assert.equal(git(['--git-dir', remote, 'rev-parse', 'main'], fixture.env, fixture.repo).trim(), sha);
+});
+
+test('fast-forward merge keeps an incoming merge commit unchanged', () => {
+  const fixture = repository();
+  const base = run(['hook', '--model', 'Example', '--', 'git', 'commit', '--quiet', '--allow-empty', '-m', 'base'], fixture);
+  assert.equal(base.status, 0, base.stderr);
+  git(['checkout', '-q', '-b', 'side'], fixture.env, fixture.repo);
+  writeFileSync(path.join(fixture.repo, 'side.txt'), 'side\n');
+  git(['add', 'side.txt'], fixture.env, fixture.repo);
+  git(['commit', '--quiet', '-m', 'side'], fixture.env, fixture.repo);
+  git(['checkout', '-q', 'main'], fixture.env, fixture.repo);
+  git(['checkout', '-q', '-b', 'incoming'], fixture.env, fixture.repo);
+  git(['merge', '--quiet', '--no-ff', '--no-edit', 'side'], fixture.env, fixture.repo);
+  const incoming = git(['rev-parse', 'HEAD'], fixture.env, fixture.repo).trim();
+  git(['checkout', '-q', 'main'], fixture.env, fixture.repo);
+
+  const merged = run(['hook', '--model', 'Example', '--', 'git', 'merge', '--ff-only', 'incoming'], fixture);
+
+  assert.equal(merged.status, 0, merged.stderr);
+  assert.equal(git(['rev-parse', 'HEAD'], fixture.env, fixture.repo).trim(), incoming);
+});
+
+test('merge commit created by Git receives the current model trailer', () => {
+  const fixture = repository();
+  const base = run(['hook', '--model', 'Base', '--', 'git', 'commit', '--quiet', '--allow-empty', '-m', 'base'], fixture);
+  assert.equal(base.status, 0, base.stderr);
+  git(['checkout', '-q', '-b', 'feature'], fixture.env, fixture.repo);
+  writeFileSync(path.join(fixture.repo, 'feature.txt'), 'feature\n');
+  git(['add', 'feature.txt'], fixture.env, fixture.repo);
+  const feature = run(['hook', '--model', 'Feature', '--', 'git', 'commit', '--quiet', '-m', 'feature'], fixture);
+  assert.equal(feature.status, 0, feature.stderr);
+  git(['checkout', '-q', 'main'], fixture.env, fixture.repo);
+
+  const merged = run(['hook', '--model', 'Merge', '--', 'git', 'merge', '--quiet', '--no-ff', '--no-edit', 'feature'], fixture);
+
+  assert.equal(merged.status, 0, merged.stderr);
+  const body = git(['log', '-1', '--format=%B'], fixture.env, fixture.repo);
+  assert.match(body, /AI-Assisted-By: Merge via cosplaying/);
+});
+
+test('push to a new remote checks commits known only to another remote', () => {
+  const fixture = repository();
+  const known = path.join(fixture.home, 'known.git');
+  const destination = path.join(fixture.home, 'destination.git');
+  git(['init', '--quiet', '--bare', '--initial-branch=main', known], fixture.env, fixture.repo);
+  git(['init', '--quiet', '--bare', '--initial-branch=main', destination], fixture.env, fixture.repo);
+  git(['remote', 'add', 'origin', known], fixture.env, fixture.repo);
+  git(['remote', 'add', 'destination', destination], fixture.env, fixture.repo);
+  const base = run(['hook', '--model', 'Example', '--', 'git', 'commit', '--quiet', '--allow-empty', '-m', 'base'], fixture);
+  assert.equal(base.status, 0, base.stderr);
+  const publishedBase = run(['hook', '--model', 'Example', '--', 'git', 'push', '--quiet', '--set-upstream', 'origin', 'main'], fixture);
+  assert.equal(publishedBase.status, 0, publishedBase.stderr);
+  const sha = unattributed(fixture.repo, fixture.env, 'Known to another remote');
+  git(['push', '--quiet', 'origin', 'HEAD:refs/heads/known'], fixture.env, fixture.repo);
+  git(['fetch', '--quiet', 'origin'], fixture.env, fixture.repo);
+
+  const pushed = run(['hook', '--model', 'Example', '--', 'git', 'push', '--quiet', 'destination', 'HEAD:refs/heads/new'], fixture);
+
+  assert.equal(pushed.status, 2);
+  assert.match(pushed.stderr, /BLOCKED \(command not run\)/);
+  assert.match(pushed.stderr, new RegExp(sha.slice(0, 12)));
+  const remoteRef = git(['--git-dir', destination, 'for-each-ref', '--format=%(refname)', 'refs/heads/new'], fixture.env, fixture.repo);
+  assert.equal(remoteRef, '');
+});
+
+test('push checks configured push urls instead of the fetch url', () => {
+  const fixture = repository();
+  const fetchRemote = path.join(fixture.home, 'fetch.git');
+  const pushRemote = path.join(fixture.home, 'push.git');
+  git(['init', '--quiet', '--bare', '--initial-branch=main', fetchRemote], fixture.env, fixture.repo);
+  git(['init', '--quiet', '--bare', '--initial-branch=main', pushRemote], fixture.env, fixture.repo);
+  git(['remote', 'add', 'origin', fetchRemote], fixture.env, fixture.repo);
+  git(['remote', 'set-url', '--push', 'origin', pushRemote], fixture.env, fixture.repo);
+  const base = run(['hook', '--model', 'Example', '--', 'git', 'commit', '--quiet', '--allow-empty', '-m', 'base'], fixture);
+  assert.equal(base.status, 0, base.stderr);
+  const sha = unattributed(fixture.repo, fixture.env, 'Known at fetch url only');
+  git(['push', '--quiet', fetchRemote, 'HEAD:refs/heads/known'], fixture.env, fixture.repo);
+  git(['fetch', '--quiet', 'origin'], fixture.env, fixture.repo);
+
+  const pushed = run(['hook', '--model', 'Example', '--', 'git', 'push', '--quiet', 'origin', 'HEAD:refs/heads/new'], fixture);
+
+  assert.equal(pushed.status, 2);
+  assert.match(pushed.stderr, new RegExp(sha.slice(0, 12)));
+  const remoteRef = git(['--git-dir', pushRemote, 'for-each-ref', '--format=%(refname)', 'refs/heads/new'], fixture.env, fixture.repo);
+  assert.equal(remoteRef, '');
+});
+
+test('push checks every configured push url', () => {
+  const fixture = repository();
+  const fetchRemote = path.join(fixture.home, 'fetch.git');
+  const knownPushRemote = path.join(fixture.home, 'known-push.git');
+  const emptyPushRemote = path.join(fixture.home, 'empty-push.git');
+  git(['init', '--quiet', '--bare', '--initial-branch=main', fetchRemote], fixture.env, fixture.repo);
+  git(['init', '--quiet', '--bare', '--initial-branch=main', knownPushRemote], fixture.env, fixture.repo);
+  git(['init', '--quiet', '--bare', '--initial-branch=main', emptyPushRemote], fixture.env, fixture.repo);
+  git(['remote', 'add', 'origin', fetchRemote], fixture.env, fixture.repo);
+  git(['remote', 'set-url', '--push', 'origin', knownPushRemote], fixture.env, fixture.repo);
+  git(['remote', 'set-url', '--add', '--push', 'origin', emptyPushRemote], fixture.env, fixture.repo);
+  const base = run(['hook', '--model', 'Example', '--', 'git', 'commit', '--quiet', '--allow-empty', '-m', 'base'], fixture);
+  assert.equal(base.status, 0, base.stderr);
+  const sha = unattributed(fixture.repo, fixture.env, 'Known at one push url');
+  git(['push', '--quiet', knownPushRemote, 'HEAD:refs/heads/known'], fixture.env, fixture.repo);
+
+  const pushed = run(['hook', '--model', 'Example', '--', 'git', 'push', '--quiet', 'origin', 'HEAD:refs/heads/new'], fixture);
+
+  assert.equal(pushed.status, 2);
+  assert.match(pushed.stderr, new RegExp(sha.slice(0, 12)));
+  const remoteRef = git(['--git-dir', emptyPushRemote, 'for-each-ref', '--format=%(refname)', 'refs/heads/new'], fixture.env, fixture.repo);
+  assert.equal(remoteRef, '');
+});
+
+test('push blocks a configured remote refspec the hook cannot inspect', () => {
+  const fixture = repository();
+  const remote = path.join(fixture.home, 'origin.git');
+  git(['init', '--quiet', '--bare', '--initial-branch=main', remote], fixture.env, fixture.repo);
+  git(['remote', 'add', 'origin', remote], fixture.env, fixture.repo);
+  const base = run(['hook', '--model', 'Example', '--', 'git', 'commit', '--quiet', '--allow-empty', '-m', 'base'], fixture);
+  assert.equal(base.status, 0, base.stderr);
+  const pushedBase = run(['hook', '--model', 'Example', '--', 'git', 'push', '--quiet', '--set-upstream', 'origin', 'main'], fixture);
+  assert.equal(pushedBase.status, 0, pushedBase.stderr);
+  git(['checkout', '-q', '-b', 'other'], fixture.env, fixture.repo);
+  unattributed(fixture.repo, fixture.env, 'Unattributed other branch');
+  git(['checkout', '-q', 'main'], fixture.env, fixture.repo);
+  git(['config', '--add', 'remote.origin.push', 'refs/heads/other:refs/heads/published'], fixture.env, fixture.repo);
+
+  const pushed = run(['hook', '--model', 'Example', '--', 'git', 'push', '--quiet', 'origin'], fixture);
+
+  assert.equal(pushed.status, 2);
+  assert.match(pushed.stderr, /BLOCKED \(command not run\)/);
+  const remoteRef = git(['--git-dir', remote, 'for-each-ref', '--format=%(refname)', 'refs/heads/published'], fixture.env, fixture.repo);
+  assert.equal(remoteRef, '');
+});
+
+test('push blocks matching branches when another branch has no trailer', () => {
+  const fixture = repository();
+  const remote = path.join(fixture.home, 'origin.git');
+  git(['init', '--quiet', '--bare', '--initial-branch=main', remote], fixture.env, fixture.repo);
+  git(['remote', 'add', 'origin', remote], fixture.env, fixture.repo);
+  const base = run(['hook', '--model', 'Example', '--', 'git', 'commit', '--quiet', '--allow-empty', '-m', 'base'], fixture);
+  assert.equal(base.status, 0, base.stderr);
+  const pushedMain = run(['hook', '--model', 'Example', '--', 'git', 'push', '--quiet', '--set-upstream', 'origin', 'main'], fixture);
+  assert.equal(pushedMain.status, 0, pushedMain.stderr);
+  git(['checkout', '-q', '-b', 'other'], fixture.env, fixture.repo);
+  const otherBase = run(['hook', '--model', 'Example', '--', 'git', 'commit', '--quiet', '--allow-empty', '-m', 'other base'], fixture);
+  assert.equal(otherBase.status, 0, otherBase.stderr);
+  const pushedOther = run(['hook', '--model', 'Example', '--', 'git', 'push', '--quiet', '--set-upstream', 'origin', 'other'], fixture);
+  assert.equal(pushedOther.status, 0, pushedOther.stderr);
+  const published = git(['--git-dir', remote, 'rev-parse', 'other'], fixture.env, fixture.repo).trim();
+  unattributed(fixture.repo, fixture.env, 'Unattributed other branch');
+  git(['checkout', '-q', 'main'], fixture.env, fixture.repo);
+  git(['config', 'push.default', 'matching'], fixture.env, fixture.repo);
+
+  const pushed = run(['hook', '--model', 'Example', '--', 'git', 'push', '--quiet'], fixture);
+
+  assert.equal(pushed.status, 2);
+  assert.match(pushed.stderr, /BLOCKED \(command not run\)/);
+  assert.match(pushed.stderr, /push\.default=matching/);
+  assert.equal(git(['--git-dir', remote, 'rev-parse', 'other'], fixture.env, fixture.repo).trim(), published);
+});
+
+test('merge inspection failure is reported after Git completes', () => {
+  const fixture = repository();
+  const base = run(['hook', '--model', 'Example', '--', 'git', 'commit', '--quiet', '--allow-empty', '-m', 'base'], fixture);
+  assert.equal(base.status, 0, base.stderr);
+  git(['checkout', '-q', '-b', 'feature'], fixture.env, fixture.repo);
+  const feature = run(['hook', '--model', 'Example', '--', 'git', 'commit', '--quiet', '--allow-empty', '-m', 'feature'], fixture);
+  assert.equal(feature.status, 0, feature.stderr);
+  git(['checkout', '-q', 'main'], fixture.env, fixture.repo);
+  const hook = path.join(fixture.repo, '.git', 'hooks', 'post-merge');
+  writeFileSync(hook, `#!/bin/sh\nsha=$(git rev-parse HEAD) || exit 1\nobjects=$(git rev-parse --git-path objects)\nprefix=$(printf '%s' "$sha" | cut -c1-2)\nsuffix=$(printf '%s' "$sha" | cut -c3-)\nrm -f "$objects/$prefix/$suffix"\n`);
+  chmodSync(hook, 0o755);
+
+  const merged = run(['hook', '--model', 'Example', '--', 'git', 'merge', '--no-ff', '--no-edit', 'feature'], fixture);
+
+  assert.equal(merged.status, 2);
+  assert.match(merged.stderr, /Attribution repair failed/);
+  assert.match(merged.stderr, /For more information visit: https:\/\/github\.com\/3rd-Eden\/cosplay\/tree\/main\/packages\/cli\/README\.md#error-[0-9a-f]{6}/);
 });

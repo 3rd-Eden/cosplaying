@@ -1,3 +1,4 @@
+import { CosplayError } from 'cosplaying/errors';
 import { block } from 'cosplaying/plugin';
 
 export const description = 'Attribute Git commits and check pushes for a missing AI-Assisted-By trailer.';
@@ -28,6 +29,15 @@ const REBASE_NO_WRITE = new Set(['--abort', '--quit', '--show-current-patch', '-
 
 /** @type {Set<string>} */
 const REBASE_NONCOMMIT_ACTIONS = new Set(['start', 'finish', 'abort', 'quit', 'reset']);
+
+/**
+ * @param {string} message
+ * @param {(string | number)[]} [args]
+ * @returns {CosplayError}
+ */
+function gitError(message, args = []) {
+  return new CosplayError({ name: 'cli', method: 'git', message, args });
+}
 
 /**
  * @param {string[]} args
@@ -128,7 +138,7 @@ function commitObject(bin, sha, prefix, options) {
   const headerBytes = raw.subarray(0, split);
   const headerText = headerBytes.toString('utf8');
   if (!Buffer.from(headerText).equals(headerBytes)) {
-    throw new Error(`commit ${sha} has non-UTF-8 headers. cosplaying will not rewrite it.`);
+    throw gitError('commit %s has non-UTF-8 headers. cosplaying will not rewrite it.', [sha]);
   }
   return { headers: headerText.split('\n'), message: raw.subarray(split + 2) };
 }
@@ -194,22 +204,22 @@ function newReflogEntries(before, after) {
  */
 function commitWithTrailer(bin, sha, parentMap, trailer, prefix, options) {
   const commit = commitObject(bin, sha, prefix, options);
-  if (!commit) throw new Error(`could not read commit ${sha}`);
+  if (!commit) throw gitError('could not read commit %s. Check the repository object store, then retry through cosplaying hook.', [sha]);
   const message = captureGit(bin, [
     ...prefix, '-c', 'trailer.AI-Assisted-By.ifExists=addIfDifferent',
     'interpret-trailers', '--trailer', trailerToken(trailer),
   ], { ...options, input: commit.message, encoding: 'buffer' });
-  if (!Buffer.isBuffer(message)) throw new Error(`could not add attribution to commit ${sha}`);
+  if (!Buffer.isBuffer(message)) throw gitError('could not add attribution to commit %s. Check the repository object store, then retry through cosplaying hook.', [sha]);
   const parentChanged = commit.headers.some((line) => {
     const parent = line.match(/^parent ([0-9a-f]+)$/);
     return parent && parentMap.has(parent[1]) && parentMap.get(parent[1]) !== parent[1];
   });
   if (!parentChanged && message.equals(commit.message)) return sha;
   if (commit.headers.some((line) => /^(?:gpgsig|gpgsig-sha256) /.test(line))) {
-    throw new Error(`commit ${sha} is signed. cosplaying will not invalidate its signature. Re-sign it after adding attribution.`);
+    throw gitError('commit %s is signed. cosplaying will not invalidate its signature. Re-sign it after adding attribution.', [sha]);
   }
   if (commit.headers.some((line) => /^encoding (?!UTF-8$|utf-8$)/i.test(line))) {
-    throw new Error(`commit ${sha} uses a non-UTF-8 message encoding. cosplaying will not rewrite it.`);
+    throw gitError('commit %s uses a non-UTF-8 message encoding. cosplaying will not rewrite it.', [sha]);
   }
   const headers = [];
   for (const line of commit.headers) {
@@ -220,19 +230,8 @@ function commitWithTrailer(bin, sha, parentMap, trailer, prefix, options) {
   const raw = Buffer.concat([Buffer.from(`${headers.join('\n')}\n\n`), message]);
   const rewritten = captureGit(bin, [...prefix, 'hash-object', '-w', '-t', 'commit', '--stdin'], { ...options, input: raw });
   const next = String(rewritten || '').trim();
-  if (!/^[0-9a-f]{40,64}$/.test(next)) throw new Error(`could not write attributed commit ${sha}`);
+  if (!/^[0-9a-f]{40,64}$/.test(next)) throw gitError('could not write attributed commit %s. Check the repository object store, then retry through cosplaying hook.', [sha]);
   return next;
-}
-
-/**
- * @param {string} bin
- * @param {string[]} commits
- * @param {string[]} prefix
- * @param {object} options
- * @returns {boolean}
- */
-function hasMergeCommit(bin, commits, prefix, options) {
-  return commits.some((sha) => (commitObject(bin, sha, prefix, options)?.headers.filter((line) => line.startsWith('parent ')).length ?? 0) > 1);
 }
 
 /**
@@ -251,41 +250,44 @@ function attributeCreatedCommits(bin, command, oldHead, newHead, trailer, prefix
   if (!newHead || (newHead === oldHead && command !== 'rebase')) return;
   let commits;
   if (command === 'merge' || command === 'pull') {
-    const range = captureGit(bin, [
-      ...prefix, 'rev-list', '--first-parent', '--reverse', newHead,
-      ...(oldHead ? [`^${oldHead}`] : []),
-    ], options);
-    commits = String(range || '').trim().split(/\r?\n/).filter(Boolean);
-    if (!hasMergeCommit(bin, commits, prefix, options)) return;
+    const entries = oldReflog && newReflog ? newReflogEntries(oldReflog, newReflog) : null;
+    const headEntry = entries?.find((entry) => entry.sha === newHead);
+    if (!headEntry) {
+      throw gitError('could not identify commits created by %s from the HEAD reflog. The command completed. Do not push these commits.', [command]);
+    }
+    if (/fast-forward/i.test(headEntry.action)) return;
+    commits = [newHead];
   } else if (command === 'pull-rebase') {
-    if (!rangeBase) return;
+    if (!rangeBase) throw gitError('could not read FETCH_HEAD after pull --rebase. The command completed. Do not push these commits.');
     const range = captureGit(bin, [
       ...prefix, 'rev-list', '--topo-order', '--reverse', newHead, `^${rangeBase}`,
     ], options);
+    if (range === null) throw gitError('could not list commits created by pull --rebase. The command completed. Do not push these commits.');
     commits = String(range || '').trim().split(/\r?\n/).filter(Boolean);
   } else if (command === 'rebase') {
     const entries = oldReflog && newReflog ? newReflogEntries(oldReflog, newReflog) : null;
-    if (!entries) throw new Error('could not identify commits created by rebase from the HEAD reflog. The command completed. Do not push these commits.');
-    if (!entries.length) throw new Error('HEAD moved without a new reflog entry during rebase. cosplaying could not verify which commits were created.');
+    if (!entries) throw gitError('could not identify commits created by rebase from the HEAD reflog. The command completed. Do not push these commits.');
+    if (!entries.length) throw gitError('HEAD moved without a new reflog entry during rebase. cosplaying could not verify which commits were created.');
     const candidates = new Set();
     for (const { sha, action } of entries) {
       if (action === 'rebase: fast-forward') continue;
       const step = action.match(/^rebase \(([^)]+)\):/);
       if (step && REBASE_NONCOMMIT_ACTIONS.has(step[1])) continue;
       if (step || /^commit(?: \([^)]+\))?:/.test(action)) candidates.add(sha);
-      else if (!/^(?:reset|checkout):/.test(action)) throw new Error(`unrecognized HEAD reflog action during rebase: ${action || '(empty)'}`);
+      else if (!/^(?:reset|checkout):/.test(action)) throw gitError('unrecognized HEAD reflog action during rebase: %s', [action || '(empty)']);
     }
     if (!candidates.size) return;
     const range = captureGit(bin, [...prefix, 'rev-list', '--topo-order', '--reverse', newHead], options);
-    if (range === null) throw new Error('could not list the rebased commits');
+    if (range === null) throw gitError('could not list the rebased commits. The command completed. Do not push these commits.');
     commits = String(range).trim().split(/\r?\n/).filter((sha) => candidates.has(sha));
-    if (!commits.length) throw new Error('the rebase reflog commits are not reachable from HEAD. cosplaying will not alter unrelated history.');
+    if (!commits.length) throw gitError('the rebase reflog commits are not reachable from HEAD. cosplaying will not alter unrelated history.');
   } else if (REWRITE_AFTER.has(command)) {
     const range = captureGit(bin, [
       ...prefix, 'rev-list', '--first-parent', '--reverse', newHead,
       ...(oldHead ? [`^${oldHead}`] : []),
     ], options);
-    commits = String(range || '').trim().split(/\r?\n/).filter(Boolean);
+    if (range === null) throw gitError('could not list commits created by %s. The command completed. Do not push these commits.', [command]);
+    commits = String(range).trim().split(/\r?\n/).filter(Boolean);
   } else return;
   if (!commits.length) return;
 
@@ -297,7 +299,7 @@ function attributeCreatedCommits(bin, command, oldHead, newHead, trailer, prefix
     ...prefix, 'update-ref', ref, parentMap.get(newHead) || newHead,
     ...(newHead ? [newHead] : []),
   ], options);
-  if (result === null) throw new Error('HEAD moved while cosplaying was adding commit trailers');
+  if (result === null) throw gitError('HEAD moved while cosplaying was adding commit trailers. Do not push these commits.');
 }
 
 /**
@@ -305,7 +307,7 @@ function attributeCreatedCommits(bin, command, oldHead, newHead, trailer, prefix
  * @param {string[]} args
  * @param {{command: string, index: number}} info
  * @param {object} options
- * @returns {Array<{sha: string, email: string, trailer: string, subject: string}> | null}
+ * @returns {Array<{sha: string, email: string, trailer: string, subject: string}> | CosplayError | null}
  */
 function outgoingCommits(bin, args, info, options) {
   const prefix = args.slice(0, info.index);
@@ -322,9 +324,14 @@ function outgoingCommits(bin, args, info, options) {
   const tail = args.slice(info.index + 1);
   if (tail.some((arg) => ['--delete', '-d', '--dry-run', '-n'].includes(arg))) return [];
   if (tail.some((arg) => ['--all', '--mirror', '--tags'].includes(arg))) {
-    return branchCommits(['--all', '--not', '--remotes']);
+    return gitError('this push can send multiple refs. Pass explicit refspecs through cosplaying hook so each destination can be checked.');
   }
   const upstream = captureGit(bin, [...prefix, 'rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{upstream}'], options);
+  const branch = String(captureGit(bin, [...prefix, 'symbolic-ref', '--quiet', '--short', 'HEAD'], options) || '').trim();
+  const branchPushRemote = branch ? captureGit(bin, [...prefix, 'config', '--get', `branch.${branch}.pushRemote`], options) : null;
+  const defaultPushRemote = captureGit(bin, [...prefix, 'config', '--get', 'remote.pushDefault'], options);
+  const upstreamRef = String(upstream || '').trim();
+  const upstreamRemote = upstreamRef.split('/')[0];
   const positional = [];
   let optionRemote;
   const valuedOptions = new Set(['-o', '--push-option', '--receive-pack', '--exec', '--repo', '--recurse-submodules']);
@@ -338,35 +345,73 @@ function outgoingCommits(bin, args, info, options) {
     if (arg.startsWith('-')) continue;
     positional.push(arg);
   }
-  const explicitRemote = tail.find((arg) => arg.startsWith('--repo='))?.slice('--repo='.length) || optionRemote || positional[0];
-  const upstreamRemote = String(upstream || '').trim().split('/')[0];
-  const remote = explicitRemote || upstreamRemote;
-  const refspecs = optionRemote || tail.some((arg) => arg.startsWith('--repo=')) ? positional : positional.slice(1);
+  const equalsRemote = tail.find((arg) => arg.startsWith('--repo='))?.slice('--repo='.length);
+  const looksLikeRefspec = (value) => value.includes(':') || value.startsWith('+') || value.startsWith('^') || value === 'HEAD';
+  const positionalHasRemote = !optionRemote && !equalsRemote && positional.length > 0 && !looksLikeRefspec(positional[0]);
+  const explicitRemote = equalsRemote || optionRemote || (positionalHasRemote ? positional[0] : undefined);
+  const remote = explicitRemote || String(branchPushRemote || defaultPushRemote || upstreamRemote || 'origin').trim();
+  const refspecs = optionRemote || equalsRemote ? positional : positionalHasRemote ? positional.slice(1) : positional;
+  const pushTargets = () => {
+    const remotes = captureGit(bin, [...prefix, 'remote'], options);
+    if (remotes === null) return null;
+    if (!String(remotes).split(/\r?\n/).includes(remote)) return [remote];
+    const output = captureGit(bin, [...prefix, 'remote', 'get-url', '--push', '--all', remote], options);
+    if (output === null) return null;
+    const targets = String(output).trim().split(/\r?\n/).filter(Boolean);
+    return targets.length ? targets : null;
+  };
+  const commitsFor = (source) => {
+    const targets = pushTargets();
+    if (!targets) return null;
+    const commits = new Map();
+    for (const target of targets) {
+      const output = captureGit(bin, [...prefix, 'ls-remote', '--refs', target], options);
+      if (output === null) return null;
+      const tips = String(output).trim().split(/\r?\n/).filter(Boolean).map((line) => line.split(/\s+/, 1)[0]);
+      const outgoing = branchCommits(tips.length ? [source, '--not', ...tips] : [source]);
+      if (!outgoing) return null;
+      for (const commit of outgoing) commits.set(commit.sha, commit);
+    }
+    return [...commits.values()];
+  };
   if (refspecs.length) {
     const commits = new Map();
     for (const refspec of refspecs) {
       const [sourceSpec, destinationSpec] = refspec.replace(/^\+/, '').split(':', 2);
       const source = sourceSpec;
       if (!source || source.startsWith('^')) continue;
-      const destination = destinationSpec ?? source;
-      const destinationBranch = destination.startsWith('refs/heads/')
-        ? destination.slice('refs/heads/'.length)
-        : destination.startsWith('refs/') ? null : destination;
-      const remoteTip = remote && destinationBranch
-        ? captureGit(bin, [...prefix, 'rev-parse', '--verify', `refs/remotes/${remote}/${destinationBranch}`], options)
-        : null;
-      const outgoing = branchCommits(remoteTip
-        ? [`${String(remoteTip).trim()}..${source}`]
-        : [source, '--not', '--remotes']);
+      if (source.includes('*') || destinationSpec?.includes('*')) {
+        return gitError('wildcard push refspecs can send multiple refs. Pass one explicit refspec at a time through cosplaying hook.');
+      }
+      const outgoing = commitsFor(source);
       if (!outgoing) return null;
       for (const commit of outgoing) commits.set(commit.sha, commit);
     }
     return [...commits.values()];
   }
-  if (upstream && positional.length <= 1 && (!explicitRemote || explicitRemote === upstreamRemote)) {
-    return branchCommits([`${String(upstream).trim()}..HEAD`]);
+  const remotePush = captureGit(bin, [...prefix, 'config', '--get-all', `remote.${remote}.push`], options);
+  if (remotePush !== null && String(remotePush).trim()) {
+    return gitError('push configuration for remote %s sets refspecs. Pass explicit refspecs through cosplaying hook, or remove that setting.', [remote]);
   }
-  return branchCommits(['HEAD', '--not', '--remotes']);
+  const pushDefaultValue = captureGit(bin, [...prefix, 'config', '--get', 'push.default'], options);
+  const pushDefault = String(pushDefaultValue || 'simple').trim().toLowerCase();
+  if (pushDefault === 'matching') {
+    return gitError('push.default=matching can send other branches. Pass explicit refspecs through cosplaying hook, or set push.default to simple, upstream, or current.');
+  }
+  if (pushDefault === 'nothing') return [];
+  if (!['simple', 'upstream', 'current'].includes(pushDefault)) {
+    return gitError('could not determine which branches this push will send. Configure push.default or pass an explicit refspec through cosplaying hook.');
+  }
+  if (pushDefault !== 'current' && !upstreamRef) {
+    return gitError('could not identify the upstream branch for this push. Set an upstream or pass an explicit refspec through cosplaying hook.');
+  }
+  if (pushDefault !== 'current' && explicitRemote && explicitRemote !== upstreamRemote) {
+    return gitError('push destination %s does not match the upstream remote %s. Pass an explicit refspec through cosplaying hook.', [explicitRemote, upstreamRemote]);
+  }
+  if (pushDefault === 'simple' && upstreamRef.split('/').at(-1) !== branch) {
+    return gitError('the upstream branch does not match the current branch. Pass an explicit refspec through cosplaying hook.');
+  }
+  return commitsFor('HEAD');
 }
 
 /**
@@ -380,15 +425,16 @@ function outgoingCommits(bin, args, info, options) {
 function pushBlockReason(bin, args, info, context, options) {
   if (!context.model) return null;
   const outgoing = outgoingCommits(bin, args, info, options);
-  if (!outgoing) return 'could not inspect outgoing commits. Fetch the remote and configure the branch upstream, then retry through cosplaying hook. The push was not run.';
+  if (outgoing instanceof CosplayError) return outgoing.message;
+  if (!outgoing) return gitError('could not inspect outgoing commits for the destination remote. Check the remote connection and settings, then retry through cosplaying hook. The push was not run.').message;
   if (!outgoing.length) return null;
   const identity = captureGit(bin, [...args.slice(0, info.index), 'var', 'GIT_COMMITTER_IDENT'], options);
   const email = String(identity || '').match(/<([^>]+)>/)?.[1]?.toLowerCase();
-  if (!email) return 'could not determine the local Git committer identity. Configure user.name and user.email, then retry through cosplaying hook. The push was not run.';
+  if (!email) return gitError('could not determine the local Git committer identity. Configure user.name and user.email, then retry through cosplaying hook. The push was not run.').message;
   const blocked = outgoing.filter((commit) => commit.email?.toLowerCase() === email && !commit.trailer?.trim());
   if (!blocked.length) return null;
   const list = blocked.map(({ sha, subject }) => `  ${sha.slice(0, 12)} ${subject || '(no subject)'}`).join('\n');
-  return `outgoing commits from the local committer lack AI-Assisted-By:\n${list}\nRepair or replay them through cosplaying before pushing.`;
+  return gitError('outgoing commits from the local committer lack AI-Assisted-By:\n%s\nRepair or replay them through cosplaying before pushing.', [list]).message;
 }
 
 /**
@@ -426,9 +472,10 @@ export default async function run(args, context) {
   const rebaseOperation = info?.command === 'rebase' && !args.slice(info.index + 1).some((arg) => REBASE_NO_WRITE.has(arg));
   const tracksCreatedCommits = Boolean(info && (['merge', 'pull', ...REWRITE_AFTER].includes(info.command) || rebaseOperation));
   const before = tracksCreatedCommits ? head(bin, prefix, options) : null;
-  const oldReflog = rebaseOperation ? reflogEntries(bin, prefix, options) : null;
+  const inspectsReflog = rebaseOperation || info?.command === 'merge' || info?.command === 'pull';
+  const oldReflog = inspectsReflog ? reflogEntries(bin, prefix, options) : null;
   if (rebaseOperation && oldReflog === null) {
-    block(context.stderr, 'could not inspect the HEAD reflog needed to identify commits created by the rebase. The rebase was not run.');
+    block(context.stderr, gitError('could not inspect the HEAD reflog needed to identify commits created by the rebase. The rebase was not run.').message);
     return 2;
   }
   const child = await Promise.resolve(context.spawn(bin, prepared.args, {
@@ -440,7 +487,12 @@ export default async function run(args, context) {
   const status = exitCode(child);
   if (tracksCreatedCommits) {
     const after = head(bin, prefix, options);
-    const newReflog = rebaseOperation ? reflogEntries(bin, prefix, options) : null;
+    if (after === null && (status === 0 || before !== null)) {
+      const error = gitError('could not read HEAD after Git completed. Check the repository refs before you push.');
+      context.stderr.write(`cosplaying: BLOCKED after Git completed. Attribution repair failed. Do not push these commits. Reason: ${error.message}\n`);
+      return status || 2;
+    }
+    const newReflog = inspectsReflog ? reflogEntries(bin, prefix, options) : null;
     const rebaseHasNewEntries = newReflog && (newReflogEntries(oldReflog, newReflog)?.length ?? 0) > 0;
     if (after && (after !== before || rebaseHasNewEntries)) {
       try {
