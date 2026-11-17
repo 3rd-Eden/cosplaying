@@ -13,10 +13,11 @@ const VALUE_FLAGS = new Set(['-C', '-c', '--config-env', '--git-dir', '--namespa
 
 /** @type {Set<string>} */
 const GLOBAL_FLAGS = new Set([
-  '--bare', '--exec-path', '--glob-pathspecs', '--html-path', '--icase-pathspecs', '--info-path',
+  '--bare', '--exec-path', '--glob-pathspecs', '--html-path', '--icase-pathspecs', '--info-path', '--no-advice',
   '--literal-pathspecs', '--man-path', '--no-lazy-fetch', '--no-optional-locks', '--no-pager',
-  '--no-replace-objects', '--noglob-pathspecs', '--paginate', '-P', '-p',
+  '--no-replace-objects', '--noglob-pathspecs', '--paginate', '--version', '--help', '-P', '-p', '-v', '-h',
 ]);
+const TERMINAL_FLAGS = new Set(['--version', '--help', '-v', '-h']);
 
 /** @type {Set<string>} */
 const COMMIT_CREATORS = new Set(['commit', 'merge', 'pull', 'cherry-pick', 'revert', 'am', 'rebase']);
@@ -41,19 +42,32 @@ function gitError(message, args = []) {
 
 /**
  * @param {string[]} args
- * @returns {{command: string, index: number} | null}
+ * @returns {{command: string, index: number, blockedReason?: string} | {command: null, index: number, blockedReason: string} | null}
  */
 function commandInfo(args) {
   let index = 0;
   while (index < args.length) {
     const arg = args[index];
-    if (arg === '--') return null;
+    if (arg === '--') {
+      return {
+        command: null,
+        index,
+        blockedReason: gitError('cannot classify a Git command after the option separator. Remove -- before the command and retry through cosplaying hook.').message,
+      };
+    }
+    if (TERMINAL_FLAGS.has(arg)) return null;
     if (!arg.startsWith('-')) return { command: arg, index };
     const equals = arg.indexOf('=');
     const flag = equals < 0 ? arg : arg.slice(0, equals);
     if (VALUE_FLAGS.has(flag)) index += equals < 0 ? 2 : 1;
     else if (GLOBAL_FLAGS.has(flag)) index += 1;
-    else return null;
+    else {
+      return {
+        command: null,
+        index,
+        blockedReason: gitError('cannot classify the Git command after option %s. Use a supported global option, then retry through cosplaying hook.', [arg]).message,
+      };
+    }
   }
   return null;
 }
@@ -81,6 +95,9 @@ function requireTrailer(context) {
  */
 function rewriteGitArgs(inputArgs, context) {
   const info = commandInfo(inputArgs);
+  if (info?.blockedReason) {
+    return { args: [...inputArgs], changed: false, command: null, blockedReason: info.blockedReason };
+  }
   if (info?.command === 'rebase' && inputArgs.slice(info.index + 1).some((arg) => REBASE_NO_WRITE.has(arg))) {
     return { args: [...inputArgs], changed: false, command: 'rebase', blockedReason: null };
   }
@@ -154,7 +171,10 @@ function pullUsesRebase(bin, args, index, options) {
   let requested;
   for (const arg of args.slice(index + 1)) {
     if (arg === '--no-rebase') requested = false;
-    else if (arg === '--rebase' || arg.startsWith('--rebase=') || arg === '-r') requested = true;
+    else if (arg === '--rebase' || arg === '-r') requested = true;
+    else if (arg.startsWith('--rebase=')) {
+      requested = !['false', 'no', 'off', '0'].includes(arg.slice('--rebase='.length).trim().toLowerCase());
+    }
   }
   if (requested !== undefined) return requested;
   const prefix = args.slice(0, index);

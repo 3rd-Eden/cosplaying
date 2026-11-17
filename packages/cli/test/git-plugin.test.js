@@ -106,6 +106,48 @@ test('commit adds a trailer, amend replaces it, and a missing model does not com
   assert.equal(status.status, 0, status.stderr);
 });
 
+test('a commit after a supported global option receives a trailer', () => {
+  const fixture = repository();
+
+  const committed = run(['hook', '--model', 'Example', '--', 'git', '--no-advice', 'commit', '--quiet', '--allow-empty', '-m', 'global option'], fixture);
+
+  assert.equal(committed.status, 0, committed.stderr);
+  assert.match(git(['log', '-1', '--format=%B'], fixture.env, fixture.repo), /AI-Assisted-By: Example via cosplaying/);
+});
+
+test('git version remains available without attribution', () => {
+  const fixture = repository();
+
+  const version = run(['hook', '--', 'git', '--version'], fixture);
+
+  assert.equal(version.status, 0, version.stderr);
+  assert.match(version.stdout, /^git version /);
+});
+
+test('an unknown leading Git option blocks the command', () => {
+  const fixture = repository();
+
+  const blocked = run(['hook', '--model', 'Example', '--', 'git', '--unknown-global-option', 'commit', '--quiet', '--allow-empty', '-m', 'must not run'], fixture);
+
+  assert.equal(blocked.status, 2);
+  assert.match(blocked.stderr, /BLOCKED \(command not run\)/);
+  assert.match(blocked.stderr, /--unknown-global-option/);
+  assert.match(blocked.stderr, /For more information visit: https:\/\/github\.com\/3rd-Eden\/cosplay\/tree\/main\/packages\/cli\/README\.md#error-[0-9a-f]{6}/);
+  const head = spawnSync('git', ['rev-parse', '--verify', 'HEAD'], { cwd: fixture.repo, encoding: 'utf8', env: fixture.env });
+  assert.notEqual(head.status, 0);
+});
+
+test('an option separator cannot hide a commit from the guard', () => {
+  const fixture = repository();
+
+  const blocked = run(['hook', '--', 'git', '--', 'commit', '--quiet', '--allow-empty', '-m', 'must not run'], fixture);
+
+  assert.equal(blocked.status, 2);
+  assert.match(blocked.stderr, /BLOCKED \(command not run\)/);
+  const head = spawnSync('git', ['rev-parse', '--verify', 'HEAD'], { cwd: fixture.repo, encoding: 'utf8', env: fixture.env });
+  assert.notEqual(head.status, 0);
+});
+
 test('cherry-pick keeps the existing trailer and adds the current model', () => {
   const fixture = repository();
   const base = run(['hook', '--model', 'Source', '--', 'git', 'commit', '--quiet', '--allow-empty', '-m', 'base'], fixture);
@@ -134,7 +176,7 @@ test('push blocks an unattributed local commit when a model is set', () => {
   assert.equal(pushed.status, 0, pushed.stderr);
   const published = git(['--git-dir', remote, 'rev-parse', 'main'], fixture.env, fixture.repo).trim();
   const sha = unattributed(fixture.repo, fixture.env, 'Unattributed local commit');
-  const blocked = run(['hook', '--model', 'Example', '--', 'git', 'push', '--quiet'], fixture);
+  const blocked = run(['hook', '--model', 'Example', '--', 'git', '--no-advice', 'push', '--quiet'], fixture);
   assert.equal(blocked.status, 2);
   assert.match(blocked.stderr, /BLOCKED \(command not run\)/);
   assert.match(blocked.stderr, new RegExp(sha.slice(0, 12)));
@@ -180,6 +222,37 @@ test('merge commit created by Git receives the current model trailer', () => {
   assert.equal(merged.status, 0, merged.stderr);
   const body = git(['log', '-1', '--format=%B'], fixture.env, fixture.repo);
   assert.match(body, /AI-Assisted-By: Merge via cosplaying/);
+});
+
+test('pull --rebase=false preserves the local commit and attributes only the merge', () => {
+  const fixture = repository();
+  const remote = path.join(fixture.home, 'origin.git');
+  git(['init', '--quiet', '--bare', '--initial-branch=main', remote], fixture.env, fixture.repo);
+  git(['remote', 'add', 'origin', remote], fixture.env, fixture.repo);
+  git(['config', 'pull.ff', 'false'], fixture.env, fixture.repo);
+  const base = run(['hook', '--model', 'Base', '--', 'git', 'commit', '--quiet', '--allow-empty', '-m', 'base'], fixture);
+  assert.equal(base.status, 0, base.stderr);
+  const baseSha = git(['rev-parse', 'HEAD'], fixture.env, fixture.repo).trim();
+  const pushedBase = run(['hook', '--model', 'Base', '--', 'git', 'push', '--quiet', '--set-upstream', 'origin', 'main'], fixture);
+  assert.equal(pushedBase.status, 0, pushedBase.stderr);
+  const local = run(['hook', '--model', 'Local', '--', 'git', 'commit', '--quiet', '--allow-empty', '-m', 'local'], fixture);
+  assert.equal(local.status, 0, local.stderr);
+  const localSha = git(['rev-parse', 'HEAD'], fixture.env, fixture.repo).trim();
+  git(['checkout', '-q', '-b', 'upstream', baseSha], fixture.env, fixture.repo);
+  writeFileSync(path.join(fixture.repo, 'remote.txt'), 'remote\n');
+  git(['add', 'remote.txt'], fixture.env, fixture.repo);
+  git(['commit', '--quiet', '-m', 'remote'], fixture.env, fixture.repo);
+  const remoteSha = git(['rev-parse', 'HEAD'], fixture.env, fixture.repo).trim();
+  git(['push', '--quiet', 'origin', 'HEAD:refs/heads/main'], fixture.env, fixture.repo);
+  git(['checkout', '-q', 'main'], fixture.env, fixture.repo);
+  git(['fetch', '--quiet', 'origin'], fixture.env, fixture.repo);
+
+  const pulled = run(['hook', '--model', 'Merge', '--', 'git', 'pull', '--quiet', '--rebase=false'], fixture);
+
+  assert.equal(pulled.status, 0, pulled.stderr);
+  assert.equal(git(['rev-parse', 'HEAD^1'], fixture.env, fixture.repo).trim(), localSha);
+  assert.equal(git(['rev-parse', 'HEAD^2'], fixture.env, fixture.repo).trim(), remoteSha);
+  assert.match(git(['log', '-1', '--format=%B'], fixture.env, fixture.repo), /AI-Assisted-By: Merge via cosplaying/);
 });
 
 test('push to a new remote checks commits known only to another remote', () => {
