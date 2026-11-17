@@ -55,7 +55,7 @@ test('block writes the standard message and withAttributedCopy removes its temp 
   await assert.rejects(
     () => withAttributedCopy(path.join(directory, 'missing.md'), (value) => value, () => {}),
     (error) => {
-      assert.equal(error.name, 'LayerError');
+      assert.equal(error.name, 'CosplayError');
       assert.equal(error.method, 'withAttributedCopy');
       assert.match(error.message, /missing\.md/);
       assert.match(error.message, /Check that the source file exists and is readable/);
@@ -93,7 +93,7 @@ test('withAttributedCopy keeps an extensionless name and rejects invalid UTF-8',
         return 0;
       }),
       (error) => {
-        assert.equal(error.name, 'LayerError');
+        assert.equal(error.name, 'CosplayError');
         assert.equal(error.method, 'withAttributedCopy');
         assert.match(error.message, /body\.md/);
         assert.match(error.message, /file is not valid UTF-8/);

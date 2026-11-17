@@ -23,7 +23,16 @@ const source = [
   '    }',
   '    string value;',
   '    if (spec.TryGetValue("log", out value)) {',
-  '      File.AppendAllText(value, string.Join(" ", args) + "\\n");',
+  '      string logged = spec.ContainsKey("logLines") ? string.Join("\\n", args) + "\\n" : string.Join(" ", args) + "\\n";',
+  '      if (spec.ContainsKey("overwriteLog")) File.WriteAllText(value, logged);',
+  '      else File.AppendAllText(value, logged);',
+  '      if (spec.ContainsKey("fileArgs")) {',
+  '        foreach (string arg in args) {',
+  '          if (!File.Exists(arg)) continue;',
+  '          File.AppendAllText(value, "\\n--file " + arg + "--\\n");',
+  '          File.AppendAllText(value, File.ReadAllText(arg));',
+  '        }',
+  '      }',
   '    }',
   '    if (args.Length > 0 && args[0] == "--version" && spec.TryGetValue("version", out value)) {',
   '      Console.Out.Write(value + "\\n");',
@@ -99,7 +108,7 @@ function ensureStubExe() {
  * script, so the same behavior is a real executable next to a spec file.
  * @param {string} file
  * @param {string} shellScript
- * @param {{marker?: string, prefix?: string, inside?: string, version?: string, log?: string}} [spec]
+ * @param {{marker?: string, prefix?: string, inside?: string, version?: string, log?: string, logLines?: string, overwriteLog?: string, fileArgs?: string}} [spec]
  * @returns {string}
  */
 export function writeSpawnStub(file, shellScript, spec = {}) {

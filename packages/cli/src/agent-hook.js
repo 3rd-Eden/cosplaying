@@ -1,12 +1,9 @@
 import { readSync } from 'node:fs';
 import { annotateMarkdown, normalizeIdentity, renderTrailer } from 'cosplaying/attribution';
-import { loadConfig } from './config.js';
-import { LayerError } from '@mcp-layer/error';
-import { block, loadConfiguredPlugins } from 'cosplaying/plugin';
+import { CosplayError } from 'cosplaying/errors';
+import { block } from 'cosplaying/plugin';
+import { loadPlugins } from './plugins.js';
 import { adapters, getAdapter } from 'cosplaying/adapters';
-
-const errorScope = 'cosplaying';
-const errorDocs = 'github.com/3rd-Eden/cosplay/tree/main/packages';
 import { repairHookOrder } from './harness.js';
 import { commandPrefix, cliInvocation } from './paths.js';
 import { orderWarning, renderSession, retryReason } from './prompt.js';
@@ -29,10 +26,8 @@ export function readStdin(stdin) {
         Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10);
         continue;
       }
-      throw new LayerError({
+      throw new CosplayError({
         name: 'cli',
-        scope: errorScope,
-        docs: errorDocs,
         method: 'readStdin',
         message: 'could not read hook input: %s. Run this command from the harness so it can write one JSON object to stdin.',
         args: [error.message],
@@ -73,8 +68,7 @@ function isWrapped(command, routes) {
  * @returns {Promise<{plugins: object[], routes: Record<string, string>, model: string, error?: Error}>}
  */
 async function prepare(context, model) {
-  const config = loadConfig(context);
-  const plugins = await loadConfiguredPlugins(config.plugins, context);
+  const { config, plugins } = await loadPlugins(context);
   /** @type {Record<string, string>} */
   const routes = {};
   for (const plugin of plugins) {
@@ -94,10 +88,8 @@ export async function runAgentHook(id, eventName, context) {
   const { stdout, stderr } = context;
   const harness = getAdapter(id);
   if (!harness) {
-    stderr.write(`cosplaying: ${new LayerError({
+    stderr.write(`cosplaying: ${new CosplayError({
       name: 'cli',
-      scope: errorScope,
-      docs: errorDocs,
       method: 'runAgentHook',
       message: 'unknown harness %s. Supported harnesses: %s. Run cosplaying install --harness <name> with one of those harness names.',
       args: [id, adapters.map((item) => item.id).join(', ')],
@@ -116,10 +108,8 @@ export async function runAgentHook(id, eventName, context) {
   try {
     input = JSON.parse(raw);
   } catch (error) {
-    stderr.write(`cosplaying: ${new LayerError({
+    stderr.write(`cosplaying: ${new CosplayError({
       name: 'cli',
-      scope: errorScope,
-      docs: errorDocs,
       method: 'runAgentHook',
       message: 'invalid hook input: %s. The calling agent must send one JSON hook payload on stdin. Call agent-hook with a single JSON object on stdin. This command is for harness hooks, not for typed commands.',
       args: [error.message],
@@ -127,10 +117,8 @@ export async function runAgentHook(id, eventName, context) {
     return 2;
   }
   if (!input || typeof input !== 'object' || Array.isArray(input)) {
-    stderr.write(`cosplaying: ${new LayerError({
+    stderr.write(`cosplaying: ${new CosplayError({
       name: 'cli',
-      scope: errorScope,
-      docs: errorDocs,
       method: 'runAgentHook',
       message: 'invalid hook input: %s. The calling agent must send one JSON hook payload on stdin. Call agent-hook with a single JSON object on stdin. This command is for harness hooks, not for typed commands.',
       args: ['expected a JSON object'],

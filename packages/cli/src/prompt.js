@@ -1,9 +1,6 @@
-import { LayerError } from '@mcp-layer/error';
+import { CosplayError } from 'cosplaying/errors';
 import replaces from 'replaces';
 import { getAdapter } from 'cosplaying/adapters';
-
-const errorScope = 'cosplaying';
-const errorDocs = 'github.com/3rd-Eden/cosplay/tree/main/packages';
 
 /** @type {string} */
 export const DEFAULT_SESSION = 'For authored writes with {commands}, prefix the command with {executable} hook --model <current model id> --. You are running in {harness}. When you know the model id, pass it as plain text with --model. Installed hooks pass --model-base64 for you. Write authored text in ASD-STE100 Simplified Technical English. If a command is blocked, correct the input or ask the user. Never bypass cosplaying for those commands.';
@@ -42,10 +39,8 @@ export function renderSession({ harness, executable, commands, template }) {
 export function orderWarning(files) {
   const list = [...new Set(files.filter(Boolean))];
   const where = list.length ? ` in ${list.join(', ')}` : '';
-  return new LayerError({
+  return new CosplayError({
     name: 'cli',
-    scope: errorScope,
-    docs: errorDocs,
     method: 'repairHookOrder',
     message: 'Hook order could not be verified%s. Inspect those hook files and run cosplaying doctor --repair. Wrapped commands stay denied until the order can be checked.',
     args: [where],
@@ -61,10 +56,8 @@ export function retryReason(files, repaired) {
   const list = [...new Set(files.filter(Boolean))];
   const where = list.length ? ` in ${list.join(', ')}` : '';
   const detail = repaired ? `was repaired${where}` : `could not be verified${where}`;
-  return new LayerError({
+  return new CosplayError({
     name: 'cli',
-    scope: errorScope,
-    docs: errorDocs,
     method: 'repairHookOrder',
     message: 'Hook order %s. This command was not run. Retry the command through cosplaying. If the hook file changed, trust Codex hooks again with /hooks.',
     args: [detail],

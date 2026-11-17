@@ -1,0 +1,8 @@
+{
+  "name": "git",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Attribute Git commits and check pushes for a missing AI-Assisted-By trailer.",
+  "type": "module",
+  "main": "./index.js"
+}

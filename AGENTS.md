@@ -12,7 +12,7 @@ A behavior this repo already has is not a missing feature. An earlier note that 
 
 `replaces` is the case. It fills `{name}` from the object you pass. A name with no value is a name with no value. There is no list of legal names, and a template does not have to contain `{model}`. The allowlist, the required `{model}` token, and the unknown-placeholder errors were invented here. Do not add them to `replaces` or put them back in this repo.
 
-The same mistake is a type check on an optional field, or a package this repo wrote for a job a dependency already has. Config loading is `cosmiconfig`. This repo supplies the default byline, link, and plugin list, and the documented `COSPLAYING_*` environment variables. Do not keep a config package, a platform directory matrix, or a parent walk for settings. A template is text `replaces` fills. A plugin description and examples are help text. Do not reject a file, a template, or a plugin because a field has the wrong type, is empty, or contains NUL. Keep a check only when the product cannot work without it: an empty model would name nobody, a marker inside the template makes the next edit strip the wrong block, a line break in `AI-Assisted-By` is not a Git trailer, and a non-HTTP link is not a policy URL.
+The same mistake is a type check on an optional field, or a package this repo wrote for a job a dependency already has. Config loading is `cosmiconfig`. This repo supplies the default byline, link, and plugin list. Attribution templates and the policy link come from the config file. Do not keep a config package, a platform directory matrix, or a parent walk for settings. A template is text `replaces` fills. A plugin description and examples are help text. Do not reject a file, a template, or a plugin because a field has the wrong type, is empty, or contains NUL. Keep a check only when the product cannot work without it: an empty model would name nobody, a marker inside the template makes the next edit strip the wrong block, a line break in `AI-Assisted-By` is not a Git trailer, and a non-HTTP link is not a policy URL.
 
 "We own" means the npm account `3rdeden` or GitHub `3rd-Eden`, including packages where 3rdeden is a maintainer and can publish an update (`@mcp-layer/error`, `@bento/error`, `argh`, `find-package-json`, `replaces`, `commenting`, `cli-storage`, `git-shizzle`, `pre-commit`, and the rest of that account).
 
@@ -24,7 +24,7 @@ Business rules stay in this repo even when an owned package does the mechanism: 
 
 ### Owned packages: add the missing piece
 
-- `@mcp-layer/error` / `@bento/error`: throw LayerError from `@mcp-layer/error` and put the explanation in the message. `@bento/error` must not grow a support-channel line for this product.
+- `@mcp-layer/error` / `@bento/error`: `@cosplaying/errors` exports `CosplayError`, which extends `LayerError` and sets `scope` `cosplaying` and `docs` `github.com/3rd-Eden/cosplay/tree/main/packages`. Throw `CosplayError`. Put the explanation in the message. Do not pass `scope` or `docs` at the throw. `@bento/error` must not grow a support-channel line for this product.
 - `argh`: option parsing only. This CLI is `commander`: subcommands, help, version, and pass-through of the wrapped command. Do not keep a `parseArgs` command switch.
 - `find-package-json`: walks parent directories for `package.json`. Config files are not its job. `cosmiconfig` searches those.
 - `replaces`: fills `{name}` tags. Call `replaces(template, /\{()([^{}]+)\}/g, data)`. The first group is the modifier and the second is the key. Do not scan placeholder names or require `{model}` in this repo. `temper` compiles template files. `plates` binds data to markup and has no `{name}` syntax.
@@ -41,7 +41,7 @@ Packages we do not own (`shell-quote`, `env-paths`, `execa`, `write-file-atomic`
 - `live-plugin-manager` installs and removes Node packages. Call `installFromPath` for a directory and `installFromGithub` for `owner/repo`. `require` cannot load an ESM package, so import `main` with `import(pathToFileURL(mainFile).href)`. `list()` only remembers plugins installed in the current process, so a later process reads the package directories under the plugin data directory. A second `installFromPath` succeeds, so refuse a second install when that directory already contains `package.json`. Do not keep `definePlugin`, a `cosplaying` package.json key, `installed.json`, a symlink install, or `git clone`.
 - `shell-quote` quotes `a b'c` as `"a b'c"`. `shell-escape` matches that apostrophe spelling but leaves tokens of letters, digits, `_`, `/`, and `-` unquoted, and it has no Windows mode. Installed hooks quote every token, including plain paths, and double quotes inside `cmd.exe` strings. Keep `quoteShell`.
 - `markdown-escape` escapes `/`, `(`, and `)` and turns `<>` into HTML entities. The byline escapes `` \ ` * _ { } [ ] < > ! | ``. Keep that escape.
-- `@mcp-layer/error` hashes with a sine color tag and links to the mcp-layer README. Throw LayerError from `@mcp-layer/error` and put the explanation in the message.
+- `@mcp-layer/error` hashes with a sine color tag. Its defaults are scope `@mcp-layer` and the mcp-layer README. `CosplayError` extends the class so `scope` and `docs` match this project. Throw `CosplayError`. Do not paste the docs URL at each throw.
 - `cosmiconfig` loads the config files. Pass the defaults from this repo. Do not wrap it in a second loader.
 - `env-paths` chooses directories from the real home. This process injects `home` in tests, so a session path is `path.join(home, '.config', 'cosplaying')`. Do not add a platform matrix beside that.
 - `execa` throws and returns `exitCode`. `defaultSpawn` stays on `node:child_process` because plugins depend on a spawnSync-shaped `{ status }`.
@@ -64,7 +64,7 @@ ESM JavaScript only. No TypeScript, no tsconfig, no compile step. Node refuses t
 
 pnpm workspace, `packages/*`. Do not publish workspace packages individually. The root package `cosplaying` exposes them through `package.json#exports`. One global CLI bin, `cosplaying`.
 
-Dependencies today: `collapse-white-space`, `commander`, `cosmiconfig`, `find-up`, `live-plugin-manager`, `replaces`, `unbash`, `which`, `write-file-atomic`. Do not ship bundled gh, git, or acli adapters. Git history and push rules belong in the README as a future plugin contract.
+Dependencies today: `collapse-white-space`, `commander`, `cosmiconfig`, `find-up`, `graphql`, `live-plugin-manager`, `replaces`, `unbash`, `which`, `write-file-atomic`. `graphql` parses one GraphQL document for the shipped `gh` plugin. `git` and `gh` ship under `plugins/` and stay off until `cosplaying plugin enable <name>` or a `plugins` entry names them. `acli` is not shipped. Do not put Git commit, rebase, or push rules, or GitHub write rules, in this README. Those rules belong in `plugins/git` and `plugins/gh`.
 
 ## Tests
 
@@ -80,7 +80,7 @@ Harnesses: `claude-code`, `codex`, `cursor`, `gemini`, `opencode`, `pi`.
 
 ## Errors
 
-Throw LayerError from `@mcp-layer/error` and put the explanation in the message. Do not add another error system, and do not wrap those packages. `@bento/error` must not grow a support-channel line for this product.
+Throw `CosplayError` from `cosplaying/errors`. That class extends `LayerError` from `@mcp-layer/error` and supplies this project's `scope` and `docs`. Put the explanation in the message. Do not pass `scope` or `docs` at the throw, and do not add another error system. `@bento/error` must not grow a support-channel line for this product.
 
 The message is short: what happened, the bad value or path, and the next action. `%s` receives the bad value. No support channel.
 

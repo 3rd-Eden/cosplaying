@@ -35,4 +35,4 @@ Uninstall rewrites a JSON config and leaves the file in place. A missing JSON fi
 
 ## Related packages
 
-`@cosplaying/adapters` calls these functions to install and remove harness files. `@cosplaying/cli` calls them when doctor reads a generated file and when it writes a session-model file. Failures throw `@cosplaying/errors`.
+`@cosplaying/adapters` calls these functions to install and remove harness files. `@cosplaying/cli` calls them when doctor reads a generated file and when it writes a session-model file. Failures throw `CosplayError`.

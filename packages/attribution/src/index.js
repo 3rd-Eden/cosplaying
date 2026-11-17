@@ -1,9 +1,6 @@
 import { collapseWhiteSpace } from 'collapse-white-space';
-import { LayerError } from '@mcp-layer/error';
+import { CosplayError } from 'cosplaying/errors';
 import replaces from 'replaces';
-
-const errorScope = 'cosplaying';
-const errorDocs = 'github.com/3rd-Eden/cosplay/tree/main/packages';
 
 /** @type {string} */
 export const ATTRIBUTION_MARKER = '<!-- cosplaying:attribution -->';
@@ -52,19 +49,15 @@ export function validateLink(link) {
   try {
     url = new URL(link);
   } catch {
-    throw new LayerError({
+    throw new CosplayError({
       name: 'attribution',
-      scope: errorScope,
-      docs: errorDocs,
       method: 'validateLink',
       message: 'attribution link must be an absolute HTTP or HTTPS URL, for example https://example.com/ai-policy. Replace the link with an absolute http:// or https:// URL.',
     });
   }
   if (!['http:', 'https:'].includes(url.protocol)) {
-    throw new LayerError({
+    throw new CosplayError({
       name: 'attribution',
-      scope: errorScope,
-      docs: errorDocs,
       method: 'validateLink',
       message: 'attribution link must be an absolute HTTP or HTTPS URL, for example https://example.com/ai-policy. Replace the link with an absolute http:// or https:// URL.',
     });
@@ -107,20 +100,16 @@ export function stripAttribution(value) {
 export function annotateMarkdown(value, { model, template, link, variables = {} } = {}) {
   const source = (template ?? '').replace(/\r\n?/g, '\n').trim();
   if (source.includes(ATTRIBUTION_MARKER) || source.includes(ATTRIBUTION_END_MARKER)) {
-    throw new LayerError({
+    throw new CosplayError({
       name: 'attribution',
-      scope: errorScope,
-      docs: errorDocs,
       method: 'annotateMarkdown',
       message: 'attribution template must not contain cosplaying marker comments. Remove <!-- cosplaying:attribution --> and <!-- /cosplaying:attribution --> from the template. The renderer adds those markers.',
     });
   }
   const safeModel = escapeMarkdownText(normalizeIdentity(model));
   if (!safeModel) {
-    throw new LayerError({
+    throw new CosplayError({
       name: 'attribution',
-      scope: errorScope,
-      docs: errorDocs,
       method: 'annotateMarkdown',
       message: 'attribution identity is required for text writes. Pass --model <name> or set COSPLAYING_MODEL. Do not guess the model. Run the command as cosplaying hook --model <name> -- <command>, or export COSPLAYING_MODEL.',
     });
@@ -140,10 +129,8 @@ export function annotateMarkdown(value, { model, template, link, variables = {} 
 export function renderTrailer(model, { template, link, variables = {} } = {}) {
   const safeModel = normalizeIdentity(model);
   if (!safeModel) {
-    throw new LayerError({
+    throw new CosplayError({
       name: 'attribution',
-      scope: errorScope,
-      docs: errorDocs,
       method: 'renderTrailer',
       message: 'attribution identity is required for commits. Pass --model <name> or set COSPLAYING_MODEL. Do not guess the model. Run the command as cosplaying hook --model <name> -- <command>, or export COSPLAYING_MODEL.',
     });
@@ -151,10 +138,8 @@ export function renderTrailer(model, { template, link, variables = {} } = {}) {
   const safeLink = validateLink(link);
   const rendered = fill((template ?? '').trim(), { ...variables, model: safeModel, link: safeLink });
   if (/[\r\n]/.test(rendered)) {
-    throw new LayerError({
+    throw new CosplayError({
       name: 'attribution',
-      scope: errorScope,
-      docs: errorDocs,
       method: 'renderTrailer',
       message: 'rendered trailer attribution must be a single line. Remove line breaks from variables used in the trailer template.',
     });

@@ -168,6 +168,18 @@ test('doctor with no findings names the managed installs', () => {
   assert.match(doctor.stdout, /cosplaying doctor: no findings \(6 managed installs checked\)/);
 });
 
+test('doctor does not claim Codex, Claude Code, or Gemini hooks are approved', () => {
+  const { home, cwd } = isolated();
+  const installed = run(['install'], home, cwd);
+  assert.equal(installed.status, 0, installed.stderr);
+  const doctor = run(['doctor'], home, cwd);
+  assert.equal(doctor.status, 0, doctor.stderr);
+  const output = `${doctor.stdout}${doctor.stderr}`;
+  assert.equal(output.includes('Codex, Claude Code, or Gemini hooks are approved'), false, output);
+  assert.equal(output.includes('hook is trusted'), false, output);
+  assert.equal(output.includes('approved'), false, output);
+});
+
 test('--project-dir must be a directory', () => {
   const { home, cwd } = isolated();
   const missing = path.join(cwd, 'no-such-dir');

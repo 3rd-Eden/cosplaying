@@ -1,5 +1,7 @@
 # cosplaying
 
+![COSPLAY banner showing AI attribution across a plugin ecosystem](assets/cosplay-banner.png)
+
 `cosplaying` adds a visible byline when a coding agent publishes text through a wrapped CLI. The byline names the model and points at a link you choose. It is a label a person can read. It does not prove who typed the text, and it is not a cryptographic watermark.
 
 The markdown block is a visible disclosure a deployer can use when EU AI Act Article 50(4) applies. This package does not decide whether a particular comment or commit is in scope. The `AI-Assisted-By` trailer is a structured line Git can store. It is not a provider's Article 50(2) machine-readable marking solution, and this project does not claim Article 50(2) compliance.
@@ -27,17 +29,17 @@ cosplaying install --project-dir /path/to/repo
 cosplaying doctor --project-dir /path/to/repo
 ```
 
-`doctor --repair` rewrites a stale Node path and moves an owned hook back to the end of the pre-tool list when `rtk hook` was appended later. After that repair, Codex must be trusted again. Codex pins trust to the hook hash, and `/hooks` is required again.
+`doctor --repair` rewrites a stale Node path and moves an owned hook back to the end of the pre-tool list when `rtk hook` was appended later. That later entry removes the `cosplaying hook` prefix. After that repair, Codex must be trusted again. Codex pins trust to the hook hash, and `/hooks` is required again.
 
 ## Trust the hooks
 
-Doctor does not claim that a harness has approved its hooks.
+Doctor does not claim that a harness has approved its hooks. Users open `/hooks` and trust the command. After `--repair` changes the command, Codex must be trusted again because trust is pinned to the hook hash. Note that approval is separate and that a new agent session is required after install.
 
 - Codex: run `/hooks` and trust the cosplaying hooks. Do this again after `doctor --repair` or any reinstall.
 - Claude Code: approve the command hooks when Claude Code asks. Project hooks live in `.claude/settings.json`.
 - Gemini CLI: approve the hooks when Gemini CLI asks. They are stored in `settings.json` under the Gemini config directory.
 
-Cursor also loads Claude Code hooks after its own. Cursor cloud agents do not run user hooks. Install with `--project-dir` when a cloud agent should see the project hooks.
+Cursor also loads Claude Code hooks after its own. Cursor cloud agents do not run user hooks. Install with `--project-dir` when a cloud agent should see the project hooks. This hook does not run for Cursor cloud agents. Project install is how a repo covers cloud agents.
 
 ## Commands
 
@@ -51,6 +53,8 @@ cosplaying doctor [--project-dir <path>] [--repair]
 cosplaying plugin install <git-url-or-local-path>
 cosplaying plugin uninstall <name>
 cosplaying plugin list
+cosplaying plugin enable <git|gh>
+cosplaying plugin disable <git|gh>
 ```
 
 `--model` is plain text. `--model-base64` is base64url only. An empty value, a value that starts with `-`, or a value that is not base64url is an error and the wrapped command does not run. Do not guess which flag was intended.
@@ -65,13 +69,13 @@ The shell hook rewrites every invocation of a registered plugin command, includi
 
 The hook cannot see `bash -c "gh ..."`, `eval`, or commands inside script files. Those must call `cosplaying hook` explicitly.
 
-`rtk <command>` is rewritten to `rtk proxy <prefix> <command>` unless `proxy` is already present. `rtk run "..."` is left unchanged because the command is inside a string.
+`rtk <command>` is rewritten to `rtk proxy <prefix> <command>` unless `proxy` is already present. `rtk run "..."` is left unchanged because the command is inside a string. `rtk` accepts arbitrary commands only through `rtk proxy`, and `rtk` itself removes a bare `rtk <command>` rewrite. This package does not run `rtk` and does not undo that deletion.
 
 ## Configuration
 
 `cosmiconfig` loads the files. Zod checks each file against the settings schema, and this package supplies the defaults. Later sources replace earlier ones. Variable keys are merged. A field of the wrong type fails the command.
 
-The user file is `config.json`, `config.yaml`, or `config.yml` in `~/.config/cosplaying`. The project file is the nearest `.cosplaying.json`, `.cosplaying.yaml`, or `.cosplaying.yml`, walking up from the working directory until a `package.json`.
+The user file is `.cosplaying.json`, `.cosplaying.yaml`, or `.cosplaying.yml` in `~/.config/cosplaying`. The project file is the nearest file with those same names, walking up from the working directory until a `package.json`.
 
 Pass `--model` or set `COSPLAYING_MODEL` for the invocation. A `model` or `attribution.model` field is an error. Remove it from the file.
 
@@ -92,9 +96,7 @@ Two of `.cosplaying.json`, `.cosplaying.yaml`, and `.cosplaying.yml` in the same
 }
 ```
 
-Environment overrides, in order: `COSPLAYING_ATTRIBUTION_TEMPLATE`, `COSPLAYING_ATTRIBUTION_TEMPLATE_MARKDOWN`, `COSPLAYING_ATTRIBUTION_TEMPLATE_TRAILER`, and `COSPLAYING_LINK`. `COSPLAYING_MODEL` is only the invocation fallback. It is not a config value.
-
-The default markdown line is `Authored by {model} via [cosplaying]({link}). AI Assisted text may contain mistakes, please verify.` The default trailer value is `{model} via cosplaying ({link}). AI Assisted text may contain mistakes, please verify.` The default link is `https://www.npmjs.com/package/cosplaying`.
+The default markdown line is `Authored by {model} via [cosplaying]({link}). AI Assisted text may contain mistakes, please verify.` The default trailer value is `{model} via cosplaying ({link}). AI Assisted text may contain mistakes, please verify.` The default link is `https://github.com/3rd-eden/cosplaying`.
 
 Session text tells the model to write authored text in ASD-STE100 Simplified Technical English and to route supported plugin commands through this CLI.
 
@@ -139,31 +141,17 @@ Install from a git URL or a local path:
 cosplaying plugin install ./examples/notify
 cosplaying plugin list
 cosplaying plugin uninstall notify
+cosplaying plugin enable git
+cosplaying plugin enable gh
 ```
+
+`git` and `gh` ship in `plugins/` and stay off until `plugin enable` or a `plugins` entry names them. `cosplaying install` does not turn them on. Commit, rebase, push, and GitHub write rules are in `plugins/git` and `plugins/gh`.
 
 `COSPLAYING_<COMMAND>_BIN` overrides PATH lookup when it is an absolute path to a file. `<COMMAND>` is the command token uppercased, with non-alphanumerics turned into `_`.
 
-### Git history, when a plugin records commits
-
-This package does not ship a Git plugin. A future plugin that creates commits should follow these rules.
-
-- A git command that is not creating or publishing commits (for example `git status`) runs unchanged when no model is set, and the plugin returns the child status.
-- A new commit uses `git commit --trailer` and `-c trailer.AI-Assisted-By.ifExists=replace`.
-- Global options such as `-C` and `-c user.name` stay in front. `-c trailer.AI-Assisted-By.ifExists=replace` is inserted immediately before the `commit` subcommand.
-- While replaying history that is already attributed, use `ifExists=addIfDifferent`.
-- Do not rewrite a commit that has a `gpgsig` or `gpgsig-sha256` header. Do not rewrite a commit whose `encoding` header is not UTF-8.
-- `merge`, `pull`, `cherry-pick`, `revert`, `am`, and `rebase` can create commits without a message argument. Record HEAD before and after. Attribute only commits that the command created. A fast-forward or a no-op is not an error.
-- A plain `git pull` is treated as a rebase when `pull.rebase` or `branch.<name>.rebase` says so. `--rebase`, `--rebase=*`, and `-r` are rebase. `--no-rebase` and the values `false`, `no`, `off`, and `0` are not.
-- Rebase commits come from the new HEAD reflog, not the original arguments. Skip `rebase: fast-forward` and non-commit rebase actions. An unrecognized reflog action, a missing reflog, or a reflog commit that is not reachable from HEAD blocks the command. Do not rewrite unrelated history.
-- `git rebase --continue` after a conflict is attributed the same way as other rebase-created commits.
-- When adding trailers to commits a command just created, update the ref with the current HEAD as the expected old value. If HEAD moved, stop. Do not rewrite unrelated history.
-- If that repair fails after git has already created the commits, say the commits exist, attribution repair failed, and they must not be pushed.
-- `push` is checked only when the invocation has a model. `COSPLAYING_ALLOW_UNATTRIBUTED=1` skips that check for one deliberately human publish. With no model, a human push is unchanged.
-- Read the outgoing commits and the local committer email. If either read fails, block the push. Block only commits whose committer email matches the local committer and whose `AI-Assisted-By` value is empty. The reason lists the 12-character sha prefix and subject and names `COSPLAYING_ALLOW_UNATTRIBUTED=1`. The prefix applies to the refspecs being pushed, including `side:refs/heads/main`, not only the current upstream. Commits by other people are not blocked.
-
 ## Errors
 
-User-facing failures throw `LayerError` from `@mcp-layer/error`. The message says what happened, the bad value or path, and the next action.
+[Error catalog](docs/errors.md).
 
 ## Harnesses
 

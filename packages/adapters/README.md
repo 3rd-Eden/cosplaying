@@ -10,7 +10,7 @@ Owns the setup for each coding harness. `ClaudeCode`, `Codex`, `Cursor`, `Gemini
 
 In scope: user and project paths, owner markers, event names, matchers, install and uninstall of that harness file, and the JSON or text returned for a hook event.
 
-`@cosplaying/hooks` writes the file. This package chooses the path and the contents. Pi and OpenCode files are generated here and do not import this package. The repeated runner in those two files stays duplicated. Hook-order repair stays in `@cosplaying/cli`. There is no bundled `gh`, `git`, or other service adapter.
+`@cosplaying/hooks` writes the file. This package chooses the path and the contents. Pi and OpenCode files are generated here and do not import this package. The repeated runner in those two files stays duplicated. Hook-order repair stays in `@cosplaying/cli`. Shipped `git` and `gh` plugins live in `plugins/`, not in this package.
 
 ## Public API
 
@@ -33,4 +33,4 @@ Claude Code stores the session model and writes the session prompt as plain text
 
 ## Related packages
 
-`@cosplaying/cli` calls `getAdapter` for install, uninstall, agent-hook, and doctor. `@cosplaying/hooks` writes the JSON and the generated files. The installed command uses `cliInvocation` from the CLI path module. Failures from those writers throw `@cosplaying/errors`.
+`@cosplaying/cli` calls `getAdapter` for install, uninstall, agent-hook, and doctor. `@cosplaying/hooks` writes the JSON and the generated files. The installed command uses `cliInvocation` from the CLI path module. Failures from those writers throw `CosplayError`.

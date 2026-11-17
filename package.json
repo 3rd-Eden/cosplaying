@@ -21,6 +21,7 @@
   },
   "files": [
     "packages",
+    "plugins",
     "docs",
     "README.md",
     "LICENSE"
@@ -38,11 +39,11 @@
     "commander": "^15.1.0",
     "cosmiconfig": "^9.0.2",
     "find-up": "^8.0.0",
+    "graphql": "^16.14.2",
     "live-plugin-manager": "^1.1.0",
     "replaces": "^1.0.2",
     "unbash": "^4.0.11",
     "which": "^6.0.1",
-    "write-file-atomic": "^6.0.0",
-    "zod": "4.6.7"
+    "write-file-atomic": "^6.0.0"
   }
 }

@@ -1,12 +1,9 @@
 import { readFileSync } from 'node:fs';
 import { findUpSync } from 'find-up';
 import path from 'node:path';
-import { LayerError } from '@mcp-layer/error';
+import { CosplayError } from 'cosplaying/errors';
 import { readJsonConfig } from 'cosplaying/hooks';
 import { adapters, getAdapter } from 'cosplaying/adapters';
-
-const errorScope = 'cosplaying';
-const errorDocs = 'github.com/3rd-Eden/cosplay/tree/main/packages';
 
 /**
  * @param {string} id
@@ -227,18 +224,14 @@ function issuesIn(items) {
     if (lastOurs < 0 || index <= lastOurs) return;
     if (kind !== 'unverified' && kind !== 'rtk') return;
     const message = kind === 'rtk'
-      ? new LayerError({
+      ? new CosplayError({
         name: 'harness',
-        scope: errorScope,
-        docs: errorDocs,
         method: 'repairHookOrder',
         message: 'rtk hook runs after cosplaying in %s. Run cosplaying doctor --repair so the cosplaying hook is last, then retry the command. In Codex, trust the hooks again with /hooks.',
         args: [item.file],
       }).message
-      : new LayerError({
+      : new CosplayError({
         name: 'harness',
-        scope: errorScope,
-        docs: errorDocs,
         method: 'repairHookOrder',
         message: 'unverified cosplaying hook in %s. Remove that entry or run cosplaying install so the owned hook contains its # cosplaying:<harness> marker. This process will not rewrite a lookalike command.',
         args: [item.file],
