@@ -5,7 +5,6 @@ import { listPlugins } from 'cosplaying/plugin';
 import { bundledPlugins } from './bundled.js';
 import {
   CONFIG_NAMES,
-  assertSingleConfig,
   findProjectConfig,
   findUserConfig,
   userConfigDirectory,
@@ -49,7 +48,6 @@ function writeConfig(file, data) {
  */
 function userSettings(context) {
   const directory = userConfigDirectory(context);
-  assertSingleConfig(directory);
   const found = findUserConfig(context);
   if (!found) {
     return { file: path.join(directory, CONFIG_NAMES[0]), data: {} };
@@ -117,7 +115,6 @@ export async function disableBundledPlugin(name, context) {
   try {
     assertShipped(name, bundledPlugins());
     const directory = userConfigDirectory(context);
-    assertSingleConfig(directory);
     const found = findUserConfig(context);
     if (found && pluginList(found.config).includes(name)) {
       const data = { ...found.config };

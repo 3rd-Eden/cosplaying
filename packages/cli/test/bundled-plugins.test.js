@@ -100,7 +100,7 @@ test('plugin enable reports when a project plugins list keeps it disabled', () =
   assert.equal(existsSync(path.join(home, '.config', 'cosplaying', '.cosplaying.json')), false);
 });
 
-test('enable edits a yaml settings file, rejects a second file, and rejects an installed copy', () => {
+test('enable edits a yaml settings file, selects the first config file, and rejects an installed copy', () => {
   const yamlHome = isolated();
   const directory = path.join(yamlHome.home, '.config', 'cosplaying');
   mkdirSync(directory, { recursive: true });
@@ -114,11 +114,14 @@ test('enable edits a yaml settings file, rejects a second file, and rejects an i
   const many = isolated();
   const manyDir = path.join(many.home, '.config', 'cosplaying');
   mkdirSync(manyDir, { recursive: true });
-  writeFileSync(path.join(manyDir, '.cosplaying.json'), '{}\n');
-  writeFileSync(path.join(manyDir, '.cosplaying.yml'), 'plugins: []\n');
-  const both = run(['plugin', 'enable', 'gh'], many.home, many.cwd);
-  assert.equal(both.status, 1);
-  assert.match(both.stderr, /more than one config file/);
+  const jsonFile = path.join(manyDir, '.cosplaying.json');
+  const multipleYamlFile = path.join(manyDir, '.cosplaying.yml');
+  writeFileSync(jsonFile, '{}\n');
+  writeFileSync(multipleYamlFile, 'plugins: []\n');
+  const selected = run(['plugin', 'enable', 'gh'], many.home, many.cwd);
+  assert.equal(selected.status, 0, selected.stderr);
+  assert.deepEqual(JSON.parse(readFileSync(jsonFile, 'utf8')).plugins, ['gh']);
+  assert.equal(readFileSync(multipleYamlFile, 'utf8'), 'plugins: []\n');
 
   const installed = isolated();
   const source = path.join(installed.cwd, 'git-plugin');

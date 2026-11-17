@@ -62,7 +62,7 @@ test('a project yaml file supplies the link', () => {
   assert.equal(config.link, 'https://example.com/yaml');
 });
 
-test('a config model and a second project file block the command', () => {
+test('a config model blocks the command', () => {
   const home = temp();
   const cwd = temp();
   writeFileSync(path.join(cwd, '.cosplaying.json'), JSON.stringify({ model: 'FromConfig' }));
@@ -88,21 +88,25 @@ test('a config model and a second project file block the command', () => {
   });
   assert.equal(nested.status, 1);
   assert.match(nested.stderr, /cannot set the model/);
+});
 
-  const duplicateHome = temp();
-  const duplicateCwd = temp();
-  writeFileSync(path.join(duplicateCwd, '.cosplaying.json'), JSON.stringify({ link: 'https://example.com/json' }));
-  writeFileSync(path.join(duplicateCwd, '.cosplaying.yaml'), 'link: https://example.com/yaml\n');
-  const duplicate = spawnSync(process.execPath, [bin, 'rewrite', 'echo hi'], {
-    cwd: duplicateCwd,
-    env: { HOME: duplicateHome },
+test('cosmiconfig selects the first configured project settings file', () => {
+  const home = temp();
+  const cwd = temp();
+  writeFileSync(path.join(cwd, '.cosplaying.json'), JSON.stringify({ link: 'https://example.com/json' }));
+  writeFileSync(path.join(cwd, '.cosplaying.yaml'), 'link: https://example.com/yaml\n');
+
+  const config = loadConfig({ cwd, home });
+  const result = spawnSync(process.execPath, [bin, 'rewrite', 'echo hi'], {
+    cwd,
+    env: { HOME: home },
     encoding: 'utf8',
   });
-  assert.equal(duplicate.status, 1);
-  assert.match(duplicate.stderr, /more than one config file/);
-  assert.match(duplicate.stderr, /\.cosplaying\.json/);
-  assert.match(duplicate.stderr, /\.cosplaying\.yaml/);
-  assert.equal(duplicate.stdout, '');
+
+  assert.equal(config.link, 'https://example.com/json');
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stdout, 'echo hi\n');
+  assert.equal(result.stderr, '');
 });
 
 test('an optional config field of the wrong type does not stop the command', () => {

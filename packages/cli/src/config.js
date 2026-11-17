@@ -1,6 +1,5 @@
 import { cosmiconfigSync } from 'cosmiconfig';
 import { CosplayError } from 'cosplaying/errors';
-import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import path from 'node:path';
 
@@ -66,21 +65,6 @@ function normalize(config) {
 }
 
 /**
- * @param {string} directory
- * @param {string[]} names
- */
-export function assertSingleConfig(directory, names = CONFIG_NAMES) {
-  const present = names.filter((name) => existsSync(path.join(directory, name)));
-  if (present.length < 2) return;
-  throw new CosplayError({
-    name: 'cli',
-    method: 'loadConfig',
-    message: 'settings directory %s has more than one config file: %s. Keep one of .cosplaying.json, .cosplaying.yaml, or .cosplaying.yml and delete the others. Attribution stays blocked until that directory has one file.',
-    args: [directory, present.join(', ')],
-  });
-}
-
-/**
  * @param {string} file
  * @param {unknown} config
  */
@@ -123,12 +107,10 @@ function searchConfig(explorer, directory) {
 /**
  * @param {import('cosmiconfig').PublicExplorerSync} explorer
  * @param {string} directory
- * @param {string[]} [names]
  */
-function read(explorer, directory, names) {
+function read(explorer, directory) {
   const found = searchConfig(explorer, directory);
   if (!found) return {};
-  if (names) assertSingleConfig(path.dirname(found.filepath), names);
   rejectConfigModel(found.filepath, found.config);
   return normalize(found.config);
 }
@@ -141,7 +123,6 @@ function read(explorer, directory, names) {
 export function findProjectConfig({ cwd = process.cwd() } = {}) {
   const found = searchConfig(projectConfig, cwd);
   if (!found) return null;
-  assertSingleConfig(path.dirname(found.filepath));
   return found;
 }
 
@@ -170,7 +151,7 @@ export function loadConfig({ cwd = process.cwd(), home = homedir() } = {}) {
   const merged = [
     defaults,
     read(userConfig, userConfigDirectory({ home })),
-    read(projectConfig, cwd, CONFIG_NAMES),
+    read(projectConfig, cwd),
   ].reduce(merge);
   return merged;
 }
