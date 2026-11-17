@@ -2,7 +2,16 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import path from 'node:path';
 import { Kind, parse } from 'graphql';
+import { CosplayError } from 'cosplaying/errors';
 import { block } from 'cosplaying/plugin';
+
+/**
+ * @param {string} message
+ * @returns {CosplayError}
+ */
+function ghError(message) {
+  return new CosplayError({ name: 'cli', method: 'gh', message });
+}
 
 export const description = 'Attribute GitHub CLI text writes.';
 
@@ -22,7 +31,7 @@ const PROJECT_BODY_PATHS = new Set(['project item-edit']);
 const AGENT_TASK_PATHS = new Set(['agent-task create']);
 const TEXT_REQUIRED_PATHS = new Set([
   'pr create', 'pr comment', 'pr review',
-  'issue create', 'issue comment',
+  'issue create', 'issue comment', 'gist create', 'gist edit',
   'release create', 'agent-task create'
 ]);
 
@@ -130,7 +139,7 @@ function isRecord(value) {
  * @param {string} [cwd=process.cwd()] - Working directory used to find project config.
  * @param {{env?: Record<string, string | undefined>, cwd?: string, home?: string, platform?: string}} [configPaths] - Additional environment and path overrides for config lookup.
  * @returns {{model: string, template: string, link: string | undefined}} Model identity and attribution settings.
- * @throws {Error} If the model identity is missing or attribution configuration is invalid.
+ * @throws {CosplayError} If the model identity is missing or attribution configuration is invalid.
  * @public
  */
 function requireAttribution(context) {
@@ -238,7 +247,7 @@ function mergeBodyWithTrailer(text, trailer) {
  * @param {{write: function(string, string=): string}} context.tempFiles - Private copy writer for body files.
  * @param {function(): string} context.readStdin - Lazy stdin reader for `--body-file -`.
  * @returns {boolean} Whether an explicit merge message was attributed.
- * @throws {Error} If identity is missing, text flags conflict, or rebase cannot carry a trailer.
+ * @throws {CosplayError} If identity is missing, text flags conflict, or rebase cannot carry a trailer.
  * @private
  */
 function rewriteMergeArgs(args, { context, tempFiles, readStdin }) {
@@ -246,10 +255,10 @@ function rewriteMergeArgs(args, { context, tempFiles, readStdin }) {
   const files = flagOccurrences(args, ['--body-file', '-F']);
   const subjects = flagOccurrences(args, ['--subject', '-t']);
   if (!body.length && !files.length && !subjects.length) return false;
-  if (args.includes('--rebase') || args.includes('-r')) throw new Error('pr merge --rebase cannot attribute an explicit merge message; use --merge or --squash.');
-  if (body.length + files.length > 1) throw new Error('pr merge needs one body source; use either --body or --body-file.');
+  if (args.includes('--rebase') || args.includes('-r')) throw ghError('pr merge --rebase cannot attribute an explicit merge message; use --merge or --squash.');
+  if (body.length + files.length > 1) throw ghError('pr merge needs one body source; use either --body or --body-file.');
   for (const occurrence of [...body, ...files, ...subjects]) {
-    if (occurrence.value === undefined) throw new Error(`${occurrence.flag} needs a value.`);
+    if (occurrence.value === undefined) throw ghError(`${occurrence.flag} needs a value.`);
   }
   const trailer = context.attribution.renderTrailer();
   if (body.length) replaceOccurrence(args, body[0], mergeBodyWithTrailer(body[0].value, trailer));
@@ -274,7 +283,7 @@ function createTempFiles() {
      * @param {string} text - File contents.
      * @param {string} [extension='.md'] - File extension to preserve for the wrapped CLI.
      * @returns {string} Path to the written temporary file.
-     * @throws {Error} If the temporary directory or file cannot be created.
+     * @throws {CosplayError} If the temporary directory or file cannot be created.
      * @private
      */
     write(text, extension = '.md') {
@@ -285,13 +294,13 @@ function createTempFiles() {
         files.push(file);
         return file;
       } catch (error) {
-        throw new Error(`cannot create private attributed input copy: ${error.message}. Check the system temporary directory and available space; the source file was not modified.`);
+        throw ghError(`cannot create private attributed input copy: ${error.message}. Check the system temporary directory and available space; the source file was not modified.`);
       }
     },
     /**
      * Removes the temporary directory and all files written by this instance.
      * @returns {void}
-     * @throws {Error} If the temporary directory cannot be removed.
+     * @throws {CosplayError} If the temporary directory cannot be removed.
      * @private
      */
     cleanup() {
@@ -304,7 +313,7 @@ function createTempFiles() {
  * Creates a lazy reader that consumes stdin at most once.
  * @param {string | Buffer | NodeJS.ReadStream} [input=process.stdin] - Stdin source or injected text value.
  * @returns {function(): string} Function returning the cached stdin text.
- * @throws {Error} If stdin cannot be read.
+ * @throws {CosplayError} If stdin cannot be read.
  * @private
  */
 function stdinReader(input = process.stdin) {
@@ -315,7 +324,7 @@ function stdinReader(input = process.stdin) {
       if (typeof input === 'string' || Buffer.isBuffer(input)) value = String(input);
       else {
         try { value = fs.readFileSync(input.fd ?? 0, 'utf8'); }
-        catch (error) { throw new Error(`cannot read stdin: ${error.message}. Provide UTF-8 input on stdin or use a readable file where supported.`); }
+        catch (error) { throw ghError(`cannot read stdin: ${error.message}. Provide UTF-8 input on stdin or use a readable file where supported.`); }
       }
       read = true;
     }
@@ -341,13 +350,13 @@ function replaceOccurrence(args, occurrence, value) {
  * @param {string} file - Text file path or dash to read stdin.
  * @param {function(): string} readStdin - Cached stdin reader.
  * @returns {{text: string, fromStdin: boolean}} File text and whether it came from stdin.
- * @throws {Error} If the requested file cannot be read.
+ * @throws {CosplayError} If the requested file cannot be read.
  * @private
  */
 function readTextFile(file, readStdin) {
   if (file === '-') return { text: readStdin(), fromStdin: true };
   try { return { text: fs.readFileSync(file, 'utf8'), fromStdin: false }; }
-  catch (error) { throw new Error(`cannot read input file ${file}: ${error.message}. Check that the path exists and is readable, or use - for stdin where supported.`); }
+  catch (error) { throw ghError(`cannot read input file ${file}: ${error.message}. Check that the path exists and is readable, or use - for stdin where supported.`); }
 }
 
 /**
@@ -358,11 +367,11 @@ function readTextFile(file, readStdin) {
  * @param {ReturnType<typeof createTempFiles>} tempFiles - Temporary file manager for rewritten input.
  * @param {function(): string} readStdin - Cached stdin reader for dash file values.
  * @returns {boolean} Whether the argument list now points to attributed content.
- * @throws {Error} If the file input is missing, unreadable, or cannot be attributed.
+ * @throws {CosplayError} If the file input is missing, unreadable, or cannot be attributed.
  * @private
  */
 function annotateFileOccurrence(args, occurrence, context, tempFiles, readStdin) {
-  if (occurrence.value === undefined) throw new Error(`${occurrence.flag} needs a value. Pass the text-file path after the flag, or use "${occurrence.flag}=<path>"; use - for stdin when supported.`);
+  if (occurrence.value === undefined) throw ghError(`${occurrence.flag} needs a value. Pass the text-file path after the flag, or use "${occurrence.flag}=<path>"; use - for stdin when supported.`);
   const input = readTextFile(occurrence.value, readStdin);
   const output = context.attribution.annotateMarkdown(input.text);
   if (input.fromStdin || output !== input.text) {
@@ -379,7 +388,7 @@ function annotateFileOccurrence(args, occurrence, context, tempFiles, readStdin)
  * @param {{flag: string, index: number, valueIndex: number, inline: boolean, value?: string}} occurrence - Parsed text flag.
  * @param {{model: string, template: string, link: string | undefined}} config - Current attribution settings.
  * @returns {boolean} Whether the argument value changed.
- * @throws {Error} If the value cannot be attributed.
+ * @throws {CosplayError} If the value cannot be attributed.
  * @private
  */
 function annotateValueOccurrence(args, occurrence, context) {
@@ -398,11 +407,11 @@ function annotateValueOccurrence(args, occurrence, context) {
  * @param {ReturnType<typeof createTempFiles>} tempFiles - Temporary file manager for the converted body.
  * @param {function(): string} readStdin - Cached stdin reader for dash template values.
  * @returns {boolean} Whether the template argument was replaced.
- * @throws {Error} If the template input is missing, unreadable, or cannot be attributed.
+ * @throws {CosplayError} If the template input is missing, unreadable, or cannot be attributed.
  * @private
  */
 function replaceTemplate(args, occurrence, context, tempFiles, readStdin) {
-  if (occurrence.value === undefined) throw new Error(`${occurrence.flag} needs a value. Pass the template-file path after the flag or as "${occurrence.flag}=<path>".`);
+  if (occurrence.value === undefined) throw ghError(`${occurrence.flag} needs a value. Pass the template-file path after the flag or as "${occurrence.flag}=<path>".`);
   const input = readTextFile(occurrence.value, readStdin);
   const output = context.attribution.annotateMarkdown(input.text);
   const file = tempFiles.write(output, path.extname(occurrence.value) || '.md');
@@ -477,7 +486,7 @@ function normalizedApiEndpoint(endpoint, hostname) {
  * @param {string} endpoint - API route or absolute endpoint URL.
  * @param {string} method - Uppercase HTTP method.
  * @param {string} [hostname] - Configured GitHub Enterprise hostname.
- * @returns {{pattern: RegExp, methods: string[], fields?: string[], passthroughFields?: string[], trailerFields?: string[], defaultTrailerField?: string, payloadFields?: string[], emptyReview?: boolean, allowTextless?: boolean, reviewerRequest?: string, identityOnly?: boolean, dismissal?: boolean} | null} Matching write rule, or null when unsupported.
+ * @returns {{pattern: RegExp, methods: string[], fields?: string[], passthroughFields?: string[], trailerFields?: string[], defaultTrailerField?: string, payloadFields?: string[], payloadDisclosureField?: string, emptyReview?: boolean, allowTextless?: boolean, reviewerRequest?: string, identityOnly?: boolean, dismissal?: boolean} | null} Matching write rule, or null when unsupported.
  * @public
  */
 function apiRule(endpoint, method, hostname) {
@@ -506,8 +515,8 @@ function apiRule(endpoint, method, hostname) {
     { pattern: new RegExp(`^${team}/discussions/[^/]+$`), methods: ['PATCH'], fields: ['body'], passthroughFields: ['title'] },
     { pattern: new RegExp(`^${team}/discussions/[^/]+/comments$`), methods: ['POST'], fields: ['body'] },
     { pattern: new RegExp(`^${team}/discussions/[^/]+/comments/[^/]+$`), methods: ['PATCH'], fields: ['body'] },
-    { pattern: /^gists$/, methods: ['POST'], fields: ['description'], payloadFields: ['files'] },
-    { pattern: /^gists\/[^/]+$/, methods: ['PATCH'], fields: ['description'], payloadFields: ['files'] },
+    { pattern: /^gists$/, methods: ['POST'], fields: ['description'], payloadFields: ['files'], payloadDisclosureField: 'description' },
+    { pattern: /^gists\/[^/]+$/, methods: ['PATCH'], fields: ['description'], payloadFields: ['files'], payloadDisclosureField: 'description' },
     { pattern: /^gists\/[^/]+\/comments$/, methods: ['POST'], fields: ['body'] },
     { pattern: /^gists\/[^/]+\/comments\/[^/]+$/, methods: ['PATCH'], fields: ['body'] },
     { pattern: new RegExp(`^${repo}$`), methods: ['PATCH'], fields: ['description'], passthroughFields: ['name'] },
@@ -579,7 +588,7 @@ function apiRule(endpoint, method, hostname) {
  * @param {ReturnType<typeof createTempFiles>} options.tempFiles - Private copy writer for stdin input.
  * @param {function(): string} options.readStdin - Lazy stdin reader.
  * @returns {{args: string[], changed: boolean}} Validated arguments and whether stdin was redirected to a private copy.
- * @throws {Error} If the identity or reviewer payload is missing or invalid.
+ * @throws {CosplayError} If the identity or reviewer payload is missing or invalid.
  * @private
  */
 function rewriteReviewerRequestArgs(args, { context, tempFiles, readStdin, operation = 'request' }) {
@@ -587,42 +596,42 @@ function rewriteReviewerRequestArgs(args, { context, tempFiles, readStdin, opera
   const label = operation === 'remove' ? 'reviewer removals' : 'reviewer requests';
   const fields = flagOccurrences(args, API_FIELD_FLAGS);
   const inputs = flagOccurrences(args, API_INPUT_FLAGS);
-  if (inputs.length > 1) throw new Error(`gh api ${label} support one --input value. Use one JSON object with reviewer arrays.`);
-  if (inputs.length && fields.length) throw new Error('Use reviewer fields or one JSON --input file. Do not combine both forms.');
+  if (inputs.length > 1) throw ghError(`gh api ${label} support one --input value. Use one JSON object with reviewer arrays.`);
+  if (inputs.length && fields.length) throw ghError('Use reviewer fields or one JSON --input file. Do not combine both forms.');
 
   if (inputs.length) {
     const occurrence = inputs[0];
-    if (occurrence.value === undefined) throw new Error('--input needs a value. Pass a JSON file with reviewer arrays.');
+    if (occurrence.value === undefined) throw ghError('--input needs a value. Pass a JSON file with reviewer arrays.');
     const input = readTextFile(occurrence.value, readStdin);
     let request;
     try { request = JSON.parse(input.text); } catch (error) {
-      throw new Error(`could not parse gh api reviewer JSON input ${occurrence.value}: ${error.message}. Fix the JSON syntax.`);
+      throw ghError(`could not parse gh api reviewer JSON input ${occurrence.value}: ${error.message}. Fix the JSON syntax.`);
     }
-    if (!isRecord(request)) throw new Error('gh api reviewer JSON input must be one object with a reviewers or team_reviewers array.');
+    if (!isRecord(request)) throw ghError('gh api reviewer JSON input must be one object with a reviewers or team_reviewers array.');
     const unsupported = Object.keys(request).find((field) => !REVIEWER_INPUT_FIELDS.includes(field));
-    if (unsupported) throw new Error(`gh api reviewer JSON input only accepts reviewers and team_reviewers arrays. Remove "${unsupported}".`);
+    if (unsupported) throw ghError(`gh api reviewer JSON input only accepts reviewers and team_reviewers arrays. Remove "${unsupported}".`);
     let hasReviewer = false;
     for (const field of REVIEWER_INPUT_FIELDS) {
       if (!Object.hasOwn(request, field)) continue;
       if (!Array.isArray(request[field]) || request[field].some((name) => typeof name !== 'string' || !name.trim())) {
-        throw new Error(`gh api reviewer input field "${field}" must be an array of non-empty strings.`);
+        throw ghError(`gh api reviewer input field "${field}" must be an array of non-empty strings.`);
       }
       hasReviewer ||= request[field].length > 0;
     }
-    if (!hasReviewer) throw new Error(`Add at least one reviewer in reviewers or team_reviewers to ${operation} reviewers.`);
+    if (!hasReviewer) throw ghError(`Add at least one reviewer in reviewers or team_reviewers to ${operation} reviewers.`);
     if (input.fromStdin) replaceOccurrence(args, occurrence, tempFiles.write(input.text, '.json'));
     return { args, changed: input.fromStdin };
   }
 
-  if (!fields.length) throw new Error(`Add a reviewer with -f "reviewers[]=<login>" or -f "team_reviewers[]=<slug>", or pass reviewer arrays in JSON with --input to ${operation} reviewers.`);
+  if (!fields.length) throw ghError(`Add a reviewer with -f "reviewers[]=<login>" or -f "team_reviewers[]=<slug>", or pass reviewer arrays in JSON with --input to ${operation} reviewers.`);
   for (const occurrence of fields) {
-    if (occurrence.value === undefined) throw new Error(`${occurrence.flag} needs a reviewer field and value.`);
+    if (occurrence.value === undefined) throw ghError(`${occurrence.flag} needs a reviewer field and value.`);
     const separator = occurrence.value.indexOf('=');
     const field = occurrence.value.slice(0, separator);
     if (separator < 1 || !REVIEWER_FIELD_FLAGS.has(field)) {
-      throw new Error('gh api reviewer requests only accept reviewers[] and team_reviewers[] fields.');
+      throw ghError('gh api reviewer requests only accept reviewers[] and team_reviewers[] fields.');
     }
-    if (!occurrence.value.slice(separator + 1).trim()) throw new Error(`gh api reviewer field "${field}" needs a non-empty value.`);
+    if (!occurrence.value.slice(separator + 1).trim()) throw ghError(`gh api reviewer field "${field}" needs a non-empty value.`);
   }
   return { args, changed: false };
 }
@@ -651,7 +660,7 @@ function apiFieldOccurrences(args, fields) {
  * Finds a supported GraphQL mutation and its attributed input fields.
  * @param {string} query - GraphQL query text.
  * @returns {{name: string, fields?: string[], allowedFields?: string[], variables?: Array<{field: string, variable: string}>, inputVariable?: string, trailerRule?: object, identityOnly?: boolean} | null} Mutation details, or null for a read or untracked action.
- * @throws {Error} If a GraphQL mutation is not safely allowlisted.
+ * @throws {CosplayError} If a GraphQL mutation is not safely allowlisted.
  * @private
  */
 function graphqlMutation(query) {
@@ -667,7 +676,7 @@ function graphqlMutation(query) {
   const mutations = operations.filter((operation) => operation.operation === 'mutation');
   if (!mutations.length) return null;
   if (operations.length !== 1 || mutations.length !== 1) {
-    throw new Error('blocked unsupported mutating gh api request: POST graphql. cosplaying can attribute one approved content or reviewer mutation per request; split out unrelated operations. If the requested mutation is different, stop and ask for an approved route.');
+    throw ghError('blocked unsupported mutating gh api request: POST graphql. cosplaying can attribute one approved content or reviewer mutation per request; split out unrelated operations. If the requested mutation is different, stop and ask for an approved route.');
   }
 
   const selections = mutations[0].selectionSet.selections;
@@ -675,36 +684,36 @@ function graphqlMutation(query) {
     ? selections[0]
     : null;
   if (field && GRAPHQL_ACTION_MUTATIONS.has(field.name.value)) return null;
-  if (!field) throw new Error('blocked unsupported mutating gh api request: POST graphql. cosplaying needs one direct mutation field with an approved attribution rule; do not retry through bare `gh`.');
+  if (!field) throw ghError('blocked unsupported mutating gh api request: POST graphql. cosplaying needs one direct mutation field with an approved attribution rule; do not retry through bare `gh`.');
   const name = field.name.value;
   if (GRAPHQL_IDENTITY_MUTATIONS.has(name)) return { name, identityOnly: true };
   const textFields = GRAPHQL_CONTENT_MUTATIONS.get(name) || [];
   const trailerRule = GRAPHQL_TRAILER_MUTATIONS.get(name);
   if (!textFields.length && !trailerRule) {
-    throw new Error(`blocked unsupported mutating gh api request: POST graphql. cosplaying has no attribution rule for "${name}"; stop and ask for an approved route instead of retrying through bare gh.`);
+    throw ghError(`blocked unsupported mutating gh api request: POST graphql. cosplaying has no attribution rule for "${name}"; stop and ask for an approved route instead of retrying through bare gh.`);
   }
 
   const inputs = field.arguments.filter((argument) => argument.name.value === 'input');
-  if (inputs.length !== 1) throw new Error(`gh api graphql mutation "${name}" needs one input object.`);
+  if (inputs.length !== 1) throw ghError(`gh api graphql mutation "${name}" needs one input object.`);
   const allowedFields = [...new Set([...textFields, ...GRAPHQL_PASSTHROUGH_FIELDS, ...(trailerRule?.allowedFields || [])])];
   if (inputs[0].value.kind === Kind.VARIABLE) {
     return { name, fields: textFields, allowedFields, inputVariable: inputs[0].value.name.value, trailerRule };
   }
-  if (trailerRule) throw new Error(`gh api graphql mutation "${name}" needs one --input JSON object with the complete "variables.input" object so cosplaying can add the commit trailer.`);
-  if (inputs[0].value.kind !== Kind.OBJECT) throw new Error(`gh api graphql mutation "${name}" needs one input object.`);
+  if (trailerRule) throw ghError(`gh api graphql mutation "${name}" needs one --input JSON object with the complete "variables.input" object so cosplaying can add the commit trailer.`);
+  if (inputs[0].value.kind !== Kind.OBJECT) throw ghError(`gh api graphql mutation "${name}" needs one input object.`);
   const inputFields = inputs[0].value.fields;
   if (name === 'addPullRequestReview' && inputFields.some((inputField) => ['comments', 'threads'].includes(inputField.name.value))) {
-    throw new Error('gh api graphql batch review comments and threads need one --input JSON object with a variables.input object so cosplaying can attribute every body.');
+    throw ghError('gh api graphql batch review comments and threads need one --input JSON object with a variables.input object so cosplaying can attribute every body.');
   }
   const unsupportedField = inputFields.find((inputField) => GRAPHQL_TEXT_FIELDS.has(inputField.name.value) && !allowedFields.includes(inputField.name.value));
-  if (unsupportedField) throw new Error(`gh api graphql mutation "${name}" does not support the "${unsupportedField.name.value}" text field. Use a REST route with a matching attribution rule.`);
+  if (unsupportedField) throw ghError(`gh api graphql mutation "${name}" does not support the "${unsupportedField.name.value}" text field. Use a REST route with a matching attribution rule.`);
   const variables = [];
   for (const textField of textFields) {
     const matches = inputFields.filter((inputField) => inputField.name.value === textField);
-    if (matches.length > 1) throw new Error(`gh api graphql mutation "${name}" contains more than one "${textField}" field.`);
+    if (matches.length > 1) throw ghError(`gh api graphql mutation "${name}" contains more than one "${textField}" field.`);
     if (!matches.length) continue;
     if (matches[0].value.kind !== Kind.VARIABLE) {
-      throw new Error(`gh api graphql mutation "${name}" needs "${textField}: $variable" and a string value for that variable. Pass the text with -f or put it in one --input JSON object.`);
+      throw ghError(`gh api graphql mutation "${name}" needs "${textField}: $variable" and a string value for that variable. Pass the text with -f or put it in one --input JSON object.`);
     }
     variables.push({ field: textField, variable: matches[0].value.name.value });
   }
@@ -716,11 +725,11 @@ function graphqlMutation(query) {
  * @param {{flag: string, value?: string}} occurrence - Parsed field occurrence.
  * @param {function(): string} readStdin - Cached stdin reader.
  * @returns {{text: string, fromFile: boolean, file?: string}} Field text and source metadata.
- * @throws {Error} If the value is missing or its file cannot be read.
+ * @throws {CosplayError} If the value is missing or its file cannot be read.
  * @private
  */
 function readGraphqlField(occurrence, readStdin) {
-  if (occurrence.value === undefined) throw new Error(`${occurrence.flag} needs a value. Pass key=<value> after the flag or as "${occurrence.flag}=key=<value>".`);
+  if (occurrence.value === undefined) throw ghError(`${occurrence.flag} needs a value. Pass key=<value> after the flag or as "${occurrence.flag}=key=<value>".`);
   if (['-F', '--field'].includes(occurrence.flag) && occurrence.value.startsWith('@')) {
     const file = occurrence.value.slice(1);
     const input = readTextFile(file, readStdin);
@@ -736,25 +745,25 @@ function readGraphqlField(occurrence, readStdin) {
  * @param {{model: string, template: string, link: string | undefined}} config - Current attribution settings.
  * @param {string} [trailer] - Rendered Git trailer for commit mutations.
  * @returns {boolean} Whether an input field changed.
- * @throws {Error} If the input contains unsupported text fields or invalid values.
+ * @throws {CosplayError} If the input contains unsupported text fields or invalid values.
  * @private
  */
 function annotateGraphqlInput(input, mutation, context, trailer) {
   const unsupported = Object.keys(input).find((field) => GRAPHQL_TEXT_FIELDS.has(field) && !mutation.allowedFields.includes(field));
-  if (unsupported) throw new Error(`gh api graphql mutation "${mutation.name}" does not support the "${unsupported}" text field.`);
+  if (unsupported) throw ghError(`gh api graphql mutation "${mutation.name}" does not support the "${unsupported}" text field.`);
   let changed = false;
   for (const field of mutation.fields || []) {
     if (!Object.hasOwn(input, field)) continue;
-    if (typeof input[field] !== 'string') throw new Error(`gh api graphql needs a string value for "${field}" in mutation "${mutation.name}".`);
+    if (typeof input[field] !== 'string') throw ghError(`gh api graphql needs a string value for "${field}" in mutation "${mutation.name}".`);
     input[field] = context.attribution.annotateMarkdown(input[field]);
     changed = true;
   }
   if (mutation.name === 'addPullRequestReview') {
     for (const field of ['comments', 'threads']) {
       if (!Object.hasOwn(input, field)) continue;
-      if (!Array.isArray(input[field])) throw new Error(`gh api graphql review input "${field}" must be an array.`);
+      if (!Array.isArray(input[field])) throw ghError(`gh api graphql review input "${field}" must be an array.`);
       for (const [index, entry] of input[field].entries()) {
-        if (!isRecord(entry) || typeof entry.body !== 'string') throw new Error(`gh api graphql review input ${field}[${index}] must contain a string body.`);
+        if (!isRecord(entry) || typeof entry.body !== 'string') throw ghError(`gh api graphql review input ${field}[${index}] must contain a string body.`);
         entry.body = context.attribution.annotateMarkdown(entry.body);
       }
       changed = true;
@@ -765,19 +774,19 @@ function annotateGraphqlInput(input, mutation, context, trailer) {
     if (field) {
       if (!Object.hasOwn(input, field)) input[field] = '';
       if (input[field] === null) input[field] = '';
-      if (typeof input[field] !== 'string') throw new Error(`gh api graphql commit message field "${field}" must be a string.`);
+      if (typeof input[field] !== 'string') throw ghError(`gh api graphql commit message field "${field}" must be a string.`);
       input[field] = mergeBodyWithTrailer(input[field], trailer);
       changed = true;
     } else if (fieldPath) {
       let target = input;
       for (const part of fieldPath.slice(0, -1)) {
-        if (!isRecord(target[part])) throw new Error(`gh api graphql mutation "${mutation.name}" needs an object at "${fieldPath.slice(0, -1).join('.')}".`);
+        if (!isRecord(target[part])) throw ghError(`gh api graphql mutation "${mutation.name}" needs an object at "${fieldPath.slice(0, -1).join('.')}".`);
         target = target[part];
       }
       const last = fieldPath.at(-1);
       if (!Object.hasOwn(target, last)) target[last] = '';
       if (target[last] === null) target[last] = '';
-      if (typeof target[last] !== 'string') throw new Error(`gh api graphql commit message field "${fieldPath.join('.')}" must be a string.`);
+      if (typeof target[last] !== 'string') throw ghError(`gh api graphql commit message field "${fieldPath.join('.')}" must be a string.`);
       target[last] = mergeBodyWithTrailer(target[last], trailer);
       changed = true;
     }
@@ -796,13 +805,13 @@ function annotateGraphqlInput(input, mutation, context, trailer) {
  * @param {ReturnType<typeof createTempFiles>} options.tempFiles - Temporary file manager for rewritten inputs.
  * @param {function(): string} options.readStdin - Cached stdin reader.
  * @returns {{args: string[], changed: boolean}} Prepared arguments and whether a rewrite occurred.
- * @throws {Error} If the mutation or body input cannot be attributed safely.
+ * @throws {CosplayError} If the mutation or body input cannot be attributed safely.
  * @private
  */
 function rewriteGraphqlArgs(inputArgs, { context, tempFiles, readStdin }) {
   const args = [...inputArgs];
   const inputs = flagOccurrences(args, API_INPUT_FLAGS);
-  if (inputs.length > 1) throw new Error('gh api graphql supports one `--input` value. Merge the query and variables into one JSON object and pass one `--input <file>`.');
+  if (inputs.length > 1) throw ghError('gh api graphql supports one `--input` value. Merge the query and variables into one JSON object and pass one `--input <file>`.');
 
   let request;
   let requestInput;
@@ -810,19 +819,19 @@ function rewriteGraphqlArgs(inputArgs, { context, tempFiles, readStdin }) {
   let queryInput;
   if (inputs.length) {
     if (flagOccurrences(args, API_FIELD_FLAGS).length) {
-      throw new Error('choose one GraphQL input form: use `-f`/`-F` fields for the query and variables, or one `--input <file>` JSON object containing `query` and `variables`; do not combine them.');
+      throw ghError('choose one GraphQL input form: use `-f`/`-F` fields for the query and variables, or one `--input <file>` JSON object containing `query` and `variables`; do not combine them.');
     }
-    if (inputs[0].value === undefined) throw new Error(`${inputs[0].flag} needs a value. Pass one JSON file containing a top-level query string and its variables.`);
+    if (inputs[0].value === undefined) throw ghError(`${inputs[0].flag} needs a value. Pass one JSON file containing a top-level query string and its variables.`);
     requestInput = readTextFile(inputs[0].value, readStdin);
     try { request = JSON.parse(requestInput.text); } catch (error) {
-      throw new Error(`could not parse GraphQL JSON input ${inputs[0].value}: ${error.message}. Fix the JSON syntax; use one object with a top-level "query" string and optional "variables" object.`);
+      throw ghError(`could not parse GraphQL JSON input ${inputs[0].value}: ${error.message}. Fix the JSON syntax; use one object with a top-level "query" string and optional "variables" object.`);
     }
     if (!isRecord(request) || typeof request.query !== 'string') {
-      throw new Error('gh api graphql --input must be one JSON object with a top-level string `query` and an optional `variables` object.');
+      throw ghError('gh api graphql --input must be one JSON object with a top-level string `query` and an optional `variables` object.');
     }
   } else {
     const queryOccurrences = apiFieldOccurrences(args, ['query']);
-    if (queryOccurrences.length !== 1) throw new Error('gh api graphql needs exactly one query field. Pass one `-f query=<GraphQL document>`; for JSON input, use one `--input <file>` with a top-level `query` string.');
+    if (queryOccurrences.length !== 1) throw ghError('gh api graphql needs exactly one query field. Pass one `-f query=<GraphQL document>`; for JSON input, use one `--input <file>` with a top-level `query` string.');
     queryOccurrence = queryOccurrences[0];
     queryInput = readGraphqlField(queryOccurrence, readStdin);
     request = { query: queryInput.text };
@@ -857,9 +866,9 @@ function rewriteGraphqlArgs(inputArgs, { context, tempFiles, readStdin }) {
   }
 
   if (mutation.inputVariable) {
-    if (!inputs.length) throw new Error(`gh api graphql mutation "${mutation.name}" uses an input variable. Pass one --input JSON object with "variables.${mutation.inputVariable}" as an object.`);
+    if (!inputs.length) throw ghError(`gh api graphql mutation "${mutation.name}" uses an input variable. Pass one --input JSON object with "variables.${mutation.inputVariable}" as an object.`);
     const input = isRecord(request.variables) ? request.variables[mutation.inputVariable] : undefined;
-    if (!isRecord(input)) throw new Error(`gh api graphql mutation "${mutation.name}" needs "variables.${mutation.inputVariable}" as an object in the --input JSON file.`);
+    if (!isRecord(input)) throw ghError(`gh api graphql mutation "${mutation.name}" needs "variables.${mutation.inputVariable}" as an object in the --input JSON file.`);
     changed = annotateGraphqlInput(input, mutation, context, trailer);
     if (changed || requestInput.fromStdin) {
       replaceOccurrence(args, inputs[0], tempFiles.write(`${JSON.stringify(request, null, 2)}\n`, '.json'));
@@ -869,10 +878,10 @@ function rewriteGraphqlArgs(inputArgs, { context, tempFiles, readStdin }) {
   }
 
   if (inputs.length) {
-    if (!isRecord(request.variables)) throw new Error(`gh api graphql needs a variables object for mutation "${mutation.name}".`);
+    if (!isRecord(request.variables)) throw ghError(`gh api graphql needs a variables object for mutation "${mutation.name}".`);
     for (const { field, variable } of mutation.variables) {
       if (typeof request.variables[variable] !== 'string') {
-        throw new Error(`gh api graphql needs a string value for "${variable}" (${field}). Add "variables.${variable}" to the --input JSON object, using the user's text, then retry.`);
+        throw ghError(`gh api graphql needs a string value for "${variable}" (${field}). Add "variables.${variable}" to the --input JSON object, using the user's text, then retry.`);
       }
       request.variables[variable] = context.attribution.annotateMarkdown(request.variables[variable]);
     }
@@ -882,9 +891,9 @@ function rewriteGraphqlArgs(inputArgs, { context, tempFiles, readStdin }) {
     const variables = [...new Set(mutation.variables.map((entry) => entry.variable))];
     const bodyOccurrences = apiFieldOccurrences(args, variables.map((variable) => variable.toLowerCase()));
     const duplicate = bodyOccurrences.find((occurrence, index) => bodyOccurrences.slice(0, index).some((earlier) => earlier.field === occurrence.field));
-    if (duplicate) throw new Error(`gh api graphql request contains more than one "${duplicate.key}" field. Supply that variable once.`);
+    if (duplicate) throw ghError(`gh api graphql request contains more than one "${duplicate.key}" field. Supply that variable once.`);
     const missing = variables.find((variable) => !bodyOccurrences.some((occurrence) => occurrence.field === variable.toLowerCase()));
-    if (missing) throw new Error(`gh api graphql mutation "${mutation.name}" needs a string value for "${missing}". Use -f ${missing}=<user-provided text>, or put it in one --input JSON object.`);
+    if (missing) throw ghError(`gh api graphql mutation "${mutation.name}" needs a string value for "${missing}". Use -f ${missing}=<user-provided text>, or put it in one --input JSON object.`);
     if (bodyOccurrences.length) {
       for (const occurrence of bodyOccurrences) {
         if (['-F', '--field'].includes(occurrence.flag) && occurrence.value?.startsWith('@')) {
@@ -913,23 +922,23 @@ function rewriteGraphqlArgs(inputArgs, { context, tempFiles, readStdin }) {
  * @param {string[]} trailerFields - Text fields that need a Git trailer.
  * @param {string} [trailer] - Rendered Git trailer for any matched trailer field.
  * @returns {boolean} Whether an attribution field was changed.
- * @throws {Error} If the JSON body contains unsupported or invalid text fields.
+ * @throws {CosplayError} If the JSON body contains unsupported or invalid text fields.
  * @private
  */
 function annotateJson(value, context, fields, passthroughFields = [], trailerFields = [], trailer) {
-  if (!isRecord(value)) throw new Error('gh api --input must contain one top-level JSON object. Put the endpoint’s supported text field in that object as a string.');
+  if (!isRecord(value)) throw ghError('gh api --input must contain one top-level JSON object. Put the endpoint’s supported text field in that object as a string.');
   const allowedFields = [...fields, ...passthroughFields, ...trailerFields];
   const unsupportedField = Object.keys(value).find((field) => API_TEXT_FIELDS.has(field) && !allowedFields.includes(field));
-  if (unsupportedField) throw new Error(`gh api field "${unsupportedField}" is not supported for this endpoint. Supported text fields: ${allowedFields.join(', ')}. If that does not preserve the requested operation, stop and ask the user.`);
+  if (unsupportedField) throw ghError(`gh api field "${unsupportedField}" is not supported for this endpoint. Supported text fields: ${allowedFields.join(', ')}. If that does not preserve the requested operation, stop and ask the user.`);
   const matches = fields.filter((field) => Object.hasOwn(value, field));
   const trailerMatches = trailerFields.filter((field) => Object.hasOwn(value, field));
-  if (matches.length && trailerMatches.length) throw new Error('Use Markdown text fields or Git message fields in one JSON request, not both.');
+  if (matches.length && trailerMatches.length) throw ghError('Use Markdown text fields or Git message fields in one JSON request, not both.');
   for (const field of matches) {
-    if (typeof value[field] !== 'string') throw new Error(`gh api input field "${field}" must be a string. Use the user's text as a JSON string value.`);
+    if (typeof value[field] !== 'string') throw ghError(`gh api input field "${field}" must be a string. Use the user's text as a JSON string value.`);
     value[field] = annotateApiText(value[field], context, field);
   }
   for (const field of trailerMatches) {
-    if (typeof value[field] !== 'string') throw new Error(`gh api input field "${field}" must be a string. Use the user's text as a JSON string value.`);
+    if (typeof value[field] !== 'string') throw ghError(`gh api input field "${field}" must be a string. Use the user's text as a JSON string value.`);
     value[field] = mergeBodyWithTrailer(value[field], trailer);
   }
   return Boolean(matches.length || trailerMatches.length);
@@ -941,13 +950,13 @@ function annotateJson(value, context, fields, passthroughFields = [], trailerFie
  * @param {object} config - Validated model and Markdown attribution settings.
  * @param {string} field - REST text field being attributed.
  * @returns {string} Attributed text that fits the endpoint limit.
- * @throws {Error} If the attributed dismissal comment exceeds 280 characters.
+ * @throws {CosplayError} If the attributed dismissal comment exceeds 280 characters.
  * @private
  */
 function annotateApiText(value, context, field) {
   const output = context.attribution.annotateMarkdown(value);
   if (field === 'dismissed_comment' && [...output].length > 280) {
-    throw new Error('attributed dismissed_comment exceeds GitHub\'s 280-character limit. Shorten the comment or the configured Markdown attribution template; cosplaying does not truncate text.');
+    throw ghError('attributed dismissed_comment exceeds GitHub\'s 280-character limit. Shorten the comment or the configured Markdown attribution template; cosplaying does not truncate text.');
   }
   return output;
 }
@@ -964,7 +973,7 @@ function annotateApiText(value, context, field) {
  * @param {ReturnType<typeof createTempFiles>} options.tempFiles - Temporary file manager for rewritten inputs.
  * @param {function(): string} options.readStdin - Cached stdin reader.
  * @returns {{args: string[], changed: boolean}} Prepared arguments and whether a rewrite occurred.
- * @throws {Error} If a mutating request is unsupported or its text cannot be attributed safely.
+ * @throws {CosplayError} If a mutating request is unsupported or its text cannot be attributed safely.
  * @private
  */
 function rewriteApiArgs(inputArgs, { info, context, tempFiles, readStdin } = {}) {
@@ -972,7 +981,7 @@ function rewriteApiArgs(inputArgs, { info, context, tempFiles, readStdin } = {})
   const method = apiMethod(args);
   if (['GET', 'HEAD', 'OPTIONS'].includes(method)) return { args, changed: false };
   const endpoint = apiEndpoint(args, info);
-  if (!endpoint) throw new Error('cannot determine the gh api endpoint for this mutating request. Put the endpoint after `gh api`, for example `gh api <endpoint> -X <method>`, and keep the request inside cosplaying.');
+  if (!endpoint) throw ghError('cannot determine the gh api endpoint for this mutating request. Put the endpoint after `gh api`, for example `gh api <endpoint> -X <method>`, and keep the request inside cosplaying.');
   const hostValue = flagOccurrences(args, new Set(['--hostname'])).at(-1)?.value;
   const route = normalizedApiEndpoint(endpoint.value, hostValue);
   if (route === 'graphql') {
@@ -983,9 +992,9 @@ function rewriteApiArgs(inputArgs, { info, context, tempFiles, readStdin } = {})
   if (!rule) {
     const missingPull = method === 'POST' && endpoint.value.match(/^repos\/([^/]+)\/([^/]+)\/pulls\/comments\/([^/]+)\/replies$/);
     if (missingPull) {
-      throw new Error(`blocked unsupported mutating gh api request: ${method} ${endpoint.value}. Inline review comment replies need the pull request number after "pulls". Use "repos/{owner}/{repo}/pulls/{pull_number}/comments/{comment_id}/replies". If you do not know the number, read "pull_request_url" from "gh api repos/${missingPull[1]}/${missingPull[2]}/pulls/comments/${missingPull[3]}" through cosplaying. Do not retry through bare gh.`);
+      throw ghError(`blocked unsupported mutating gh api request: ${method} ${endpoint.value}. Inline review comment replies need the pull request number after "pulls". Use "repos/{owner}/{repo}/pulls/{pull_number}/comments/{comment_id}/replies". If you do not know the number, read "pull_request_url" from "gh api repos/${missingPull[1]}/${missingPull[2]}/pulls/comments/${missingPull[3]}" through cosplaying. Do not retry through bare gh.`);
     }
-    throw new Error(`blocked unsupported mutating gh api request: ${method} ${endpoint.value}. This endpoint has no safe attribution rule. Stop and ask for an approved route instead of retrying through bare gh.`);
+    throw ghError(`blocked unsupported mutating gh api request: ${method} ${endpoint.value}. This endpoint has no safe attribution rule. Stop and ask for an approved route instead of retrying through bare gh.`);
   }
   if (rule.identityOnly) {
     requireAttribution(context);
@@ -999,38 +1008,39 @@ function rewriteApiArgs(inputArgs, { info, context, tempFiles, readStdin } = {})
   const passthroughFields = rule.passthroughFields || [];
   const trailerFields = rule.trailerFields || [];
   const payloadFields = rule.payloadFields || [];
+  const payloadDisclosureField = rule.payloadDisclosureField;
   const supportedFields = [...fieldsAllowed, ...passthroughFields, ...trailerFields];
   const allTextFields = apiFieldOccurrences(args, [...API_TEXT_FIELDS]);
   const unsupportedField = allTextFields.find((occurrence) => !supportedFields.includes(occurrence.field));
-  if (unsupportedField) throw new Error(`gh api field "${unsupportedField.field}" is not supported for ${method} ${endpoint.value}. Supported text fields: ${supportedFields.join(', ')}. If that changes the requested operation, stop and ask the user.`);
+  if (unsupportedField) throw ghError(`gh api field "${unsupportedField.field}" is not supported for ${method} ${endpoint.value}. Supported text fields: ${supportedFields.join(', ')}. If that changes the requested operation, stop and ask the user.`);
   const fields = apiFieldOccurrences(args, fieldsAllowed);
   const passthroughs = apiFieldOccurrences(args, passthroughFields);
   const trailers = apiFieldOccurrences(args, trailerFields);
   const inputs = flagOccurrences(args, API_INPUT_FLAGS);
-  if (inputs.length > 1) throw new Error('gh api supports one `--input` value for attributed writes. Merge the request into one JSON object and pass one `--input <file>`.');
+  if (inputs.length > 1) throw ghError('gh api supports one `--input` value for attributed writes. Merge the request into one JSON object and pass one `--input <file>`.');
   if (inputs.length && flagOccurrences(args, API_FIELD_FLAGS).length) {
-    throw new Error('choose one attributed request form: pass fields with `-f`/`-F`, or pass one JSON file with `--input`; do not combine them.');
+    throw ghError('choose one attributed request form: pass fields with `-f`/`-F`, or pass one JSON file with `--input`; do not combine them.');
   }
   if (rule.emptyReview && flagOccurrences(args, API_FIELD_FLAGS).some((field) => /^comments(?:\[|=|$)/i.test(field.value ?? ''))) {
-    throw new Error('gh api review comments must use a JSON array in one --input file; field-encoded comments cannot be safely attributed. Put each inline comment body in comments[].body.');
+    throw ghError('gh api review comments must use a JSON array in one --input file; field-encoded comments cannot be safely attributed. Put each inline comment body in comments[].body.');
   }
   const attributed = [...fields, ...trailers];
   const duplicate = attributed.find((occurrence, index) => attributed.slice(0, index).some((earlier) => earlier.field === occurrence.field));
-  if (duplicate) throw new Error(`gh api request contains more than one "${duplicate.field}" field. Pass that field once.`);
+  if (duplicate) throw ghError(`gh api request contains more than one "${duplicate.field}" field. Pass that field once.`);
   if (rule.dismissal && fields.some((occurrence) => occurrence.key !== 'dismissed_comment')) {
-    throw new Error('code-scanning comments need the exact lowercase dismissed_comment field name so GitHub stores the attribution.');
+    throw ghError('code-scanning comments need the exact lowercase dismissed_comment field name so GitHub stores the attribution.');
   }
   if (rule.dismissal && !inputs.length) {
     const states = apiFieldOccurrences(args, ['state']);
     if (states.length !== 1 || states[0].key !== 'state' || states[0].value !== 'dismissed') {
-      throw new Error('code-scanning alert writes need one literal state=dismissed field so GitHub stores the attributed comment. Reopening and other alert updates are not supported.');
+      throw ghError('code-scanning alert writes need one literal state=dismissed field so GitHub stores the attributed comment. Reopening and other alert updates are not supported.');
     }
   }
-  if (fields.length && trailers.length) throw new Error('Use Markdown text fields or Git message fields in one request, not both.');
+  if (fields.length && trailers.length) throw ghError('Use Markdown text fields or Git message fields in one request, not both.');
   if (!inputs.length && !fields.length && !passthroughs.length && !trailers.length && !rule.emptyReview && !rule.allowTextless && !rule.defaultTrailerField) {
-    if (payloadFields.length) throw new Error(`gh api ${method} ${endpoint.value} needs a JSON --input object with ${payloadFields.join(' or ')}.`);
+    if (payloadFields.length) throw ghError(`gh api ${method} ${endpoint.value} needs a JSON --input object with ${payloadFields.join(' or ')}.`);
     const allowed = supportedFields.length ? supportedFields.join('/') : 'an attributed text field';
-    throw new Error(`gh api ${method} ${endpoint.value} needs an explicit ${allowed} field. Use one supported -f field or one --input JSON object.`);
+    throw ghError(`gh api ${method} ${endpoint.value} needs an explicit ${allowed} field. Use one supported -f field or one --input JSON object.`);
   }
 
   requireAttribution(context);
@@ -1061,17 +1071,17 @@ function rewriteApiArgs(inputArgs, { info, context, tempFiles, readStdin } = {})
   }
 
   for (const occurrence of inputs) {
-    if (occurrence.value === undefined) throw new Error(`${occurrence.flag} needs a value. Pass the JSON path after the flag, or as "${occurrence.flag}=<path>"; use - for stdin when supported.`);
+    if (occurrence.value === undefined) throw ghError(`${occurrence.flag} needs a value. Pass the JSON path after the flag, or as "${occurrence.flag}=<path>"; use - for stdin when supported.`);
     const file = occurrence.value;
     const input = readTextFile(file, readStdin);
     let body;
     try {
       body = JSON.parse(input.text);
     } catch (error) {
-      throw new Error(`could not parse gh api JSON input ${file}: ${error.message}. Fix the JSON syntax and use one supported text field or payload.`);
+      throw ghError(`could not parse gh api JSON input ${file}: ${error.message}. Fix the JSON syntax and use one supported text field or payload.`);
     }
     if (rule.dismissal && body?.state !== 'dismissed') {
-      throw new Error('code-scanning alert writes need state="dismissed" in the JSON object so GitHub stores the attributed comment. Reopening and other alert updates are not supported.');
+      throw ghError('code-scanning alert writes need state="dismissed" in the JSON object so GitHub stores the attributed comment. Reopening and other alert updates are not supported.');
     }
     let bodyChanged = annotateJson(body, context, fieldsAllowed, passthroughFields, trailerFields, trailer);
     if (rule.defaultTrailerField && !Object.hasOwn(body, rule.defaultTrailerField)) {
@@ -1083,19 +1093,26 @@ function rewriteApiArgs(inputArgs, { info, context, tempFiles, readStdin } = {})
       bodyChanged = true;
     }
     if (rule.emptyReview && Object.hasOwn(body, 'comments')) {
-      if (!Array.isArray(body.comments)) throw new Error('gh api review comments must be a JSON array in --input.');
+      if (!Array.isArray(body.comments)) throw ghError('gh api review comments must be a JSON array in --input.');
       for (const [index, comment] of body.comments.entries()) {
         if (!isRecord(comment) || typeof comment.body !== 'string') {
-          throw new Error(`gh api review comments[${index}] must be an object with a string body; correct the JSON input before retrying.`);
+          throw ghError(`gh api review comments[${index}] must be an object with a string body; correct the JSON input before retrying.`);
         }
         comment.body = context.attribution.annotateMarkdown(comment.body);
       }
     }
     const hasText = supportedFields.some((field) => Object.hasOwn(body, field));
     const hasPayload = payloadFields.some((field) => Object.hasOwn(body, field) && isRecord(body[field]));
+    const hasPayloadText = payloadDisclosureField && payloadFields.some((field) => {
+      const payload = body[field];
+      return isRecord(payload) && Object.values(payload).some((file) => isRecord(file) && Object.hasOwn(file, 'content'));
+    });
+    if (hasPayloadText && !Object.hasOwn(body, payloadDisclosureField)) {
+      throw ghError(`gh api ${method} ${endpoint.value} file writes need an attributed ${payloadDisclosureField} field in the JSON object.`);
+    }
     if (!bodyChanged && !hasText && !hasPayload && !rule.emptyReview && !rule.allowTextless) {
       const allowed = [...supportedFields, ...payloadFields].join('/') || 'an attributed text field';
-      throw new Error(`gh api ${method} ${endpoint.value} needs an explicit ${allowed} field in the JSON object.`);
+      throw ghError(`gh api ${method} ${endpoint.value} needs an explicit ${allowed} field in the JSON object.`);
     }
     if (bodyChanged || input.fromStdin) {
       replaceOccurrence(args, occurrence, tempFiles.write(`${JSON.stringify(body, null, 2)}\n`, '.json'));
@@ -1109,7 +1126,7 @@ function rewriteApiArgs(inputArgs, { info, context, tempFiles, readStdin } = {})
   }
 
   if (!fields.length && !passthroughs.length && !trailers.length && !inputs.length) {
-    if (!rule.emptyReview && !rule.allowTextless && !rule.defaultTrailerField) throw new Error(`gh api ${method} ${endpoint.value} needs an explicit ${rule.fields.join('/')} field. Add the user's text with one -f ${rule.fields[0]}=<text> field or as a string in one --input JSON object.`);
+    if (!rule.emptyReview && !rule.allowTextless && !rule.defaultTrailerField) throw ghError(`gh api ${method} ${endpoint.value} needs an explicit ${rule.fields.join('/')} field. Add the user's text with one -f ${rule.fields[0]}=<text> field or as a string in one --input JSON object.`);
     if (rule.allowTextless || rule.defaultTrailerField) return { args, changed };
     args.push('-f', `body=${context.attribution.annotateMarkdown('')}`);
     changed = true;
@@ -1177,7 +1194,7 @@ function rewriteGhArgs(inputArgs, context) {
     if (needsText) requireAttribution(context);
 
     for (const occurrence of valueOccurrences) {
-      if (occurrence.value === undefined) throw new Error(`${occurrence.flag} needs a value. Pass it after the flag or as "${occurrence.flag}=<value>".`);
+      if (occurrence.value === undefined) throw ghError(`${occurrence.flag} needs a value. Pass it after the flag or as "${occurrence.flag}=<value>".`);
       changed = annotateValueOccurrence(args, occurrence, context) || changed;
     }
     for (const occurrence of fileOccurrences) changed = annotateFileOccurrence(args, occurrence, context, tempFiles, readStdin) || changed;
@@ -1185,9 +1202,11 @@ function rewriteGhArgs(inputArgs, context) {
       for (const occurrence of templateOccurrences) changed = replaceTemplate(args, occurrence, context, tempFiles, readStdin) || changed;
     }
 
+    let hasPosition = false;
     if (AGENT_TASK_PATHS.has(info.path) && !fileOccurrences.length) {
       const position = agentTaskPosition(args, info);
       if (position >= 0) {
+        hasPosition = true;
         const output = context.attribution.annotateMarkdown(args[position]);
         if (output !== args[position]) {
           args[position] = output;
@@ -1196,10 +1215,10 @@ function rewriteGhArgs(inputArgs, context) {
       }
     }
 
-    const hasText = valueOccurrences.length || fileOccurrences.length || templateOccurrences.length;
+    const hasText = valueOccurrences.length || fileOccurrences.length || templateOccurrences.length || hasPosition;
     if (TEXT_REQUIRED_PATHS.has(info.path) && !hasText && info.path !== 'pr review') {
       const acceptedFlags = descriptor ? [...descriptor.value, ...descriptor.file, ...descriptor.template] : [];
-      throw new Error(`${info.path} needs explicit text so attribution can be guaranteed. Pass the user's intended text with one of these flags: ${acceptedFlags.join(', ') || 'a supported text input'}. If the user did not supply the text, ask before creating it.`);
+      throw ghError(`${info.path} needs explicit text so attribution can be guaranteed. Pass the user's intended text with one of these flags: ${acceptedFlags.join(', ') || 'a supported text input'}. If the user did not supply the text, ask before creating it.`);
     }
     if (info.path === 'pr review' && !hasText) {
       args.push('--body', context.attribution.annotateMarkdown(''));
@@ -1207,7 +1226,7 @@ function rewriteGhArgs(inputArgs, context) {
     }
     if (needsText && (args.includes('--web') || args.includes('-w'))) {
       const acceptedFlags = descriptor ? [...descriptor.value, ...descriptor.file, ...descriptor.template] : [];
-      throw new Error(`${info.path} cannot use browser flows because the final text cannot be attributed. Remove --web/-w and pass the user's final text with ${acceptedFlags.join(', ') || 'a supported text input'}; do not retry outside cosplaying.`);
+      throw ghError(`${info.path} cannot use browser flows because the final text cannot be attributed. Remove --web/-w and pass the user's final text with ${acceptedFlags.join(', ') || 'a supported text input'}; do not retry outside cosplaying.`);
     }
     return { args, changed, path: info.path, tempFiles, blockedReason: null };
   } catch (error) {

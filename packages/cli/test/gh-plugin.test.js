@@ -90,5 +90,75 @@ test('an unsupported gh api mutation does not run gh', () => {
   const blocked = run(['hook', '--model', 'Example', '--', 'gh', 'api', '--method', 'POST', 'repos/owner/name/dispatches'], context);
   assert.equal(blocked.status, 2, blocked.stderr);
   assert.match(blocked.stderr, /blocked unsupported mutating gh api request/);
+  assert.match(blocked.stderr, /For more information visit: https:\/\/github\.com\/3rd-Eden\/cosplay\/tree\/main\/packages\/cli\/README\.md#error-[0-9a-f]{6}/);
   assert.equal(existsSync(context.log), false);
+});
+
+test('gist file writes need an attributed description and keep the input unchanged', () => {
+  const context = fixture();
+  const input = path.join(context.cwd, 'gist.json');
+  const original = `${JSON.stringify({ files: { 'example.js': { content: 'console.log("hello");' } } }, null, 2)}\n`;
+  writeFileSync(input, original);
+
+  const blocked = run(['hook', '--model', 'Example', '--', 'gh', 'api', '--method', 'POST', 'gists', '--input', input], context);
+
+  assert.equal(blocked.status, 2, blocked.stderr);
+  assert.match(blocked.stderr, /description/);
+  assert.equal(existsSync(context.log), false);
+  assert.equal(readFileSync(input, 'utf8'), original);
+});
+
+test('gist file writes attribute the description and keep source content unchanged', () => {
+  const context = fixture();
+  const input = path.join(context.cwd, 'gist.json');
+  const original = `${JSON.stringify({ description: 'A small example.', files: { 'example.js': { content: 'console.log("hello");' } } }, null, 2)}\n`;
+  writeFileSync(input, original);
+
+  const created = run(['hook', '--model', 'Example', '--', 'gh', 'api', '--method', 'POST', 'gists', '--input', input], context);
+
+  assert.equal(created.status, 0, created.stderr);
+  const forwarded = readFileSync(context.log, 'utf8');
+  assert.match(forwarded, /<!-- cosplaying:attribution -->/);
+  assert.match(forwarded, /Authored by Example via/);
+  assert.match(forwarded, /"content": "console\.log/);
+  assert.equal(readFileSync(input, 'utf8'), original);
+});
+
+test('gist file removal does not need a description', () => {
+  const context = fixture();
+  const input = path.join(context.cwd, 'gist.json');
+  const original = `${JSON.stringify({ files: { 'old.js': null } }, null, 2)}\n`;
+  writeFileSync(input, original);
+
+  const removed = run(['hook', '--model', 'Example', '--', 'gh', 'api', '--method', 'PATCH', 'gists/123', '--input', input], context);
+
+  assert.equal(removed.status, 0, removed.stderr);
+  assert.match(readFileSync(context.log, 'utf8'), /"old.js": null/);
+  assert.equal(readFileSync(input, 'utf8'), original);
+});
+
+test('gist create and edit need an attributed description', () => {
+  const context = fixture();
+
+  const created = run(['hook', '--model', 'Example', '--', 'gh', 'gist', 'create', 'example.js'], context);
+  assert.equal(created.status, 2);
+  assert.match(created.stderr, /needs explicit text/);
+  assert.equal(existsSync(context.log), false);
+
+  const edited = run(['hook', '--model', 'Example', '--', 'gh', 'gist', 'edit', 'abc123', '--add', 'example.js'], context);
+  assert.equal(edited.status, 2);
+  assert.match(edited.stderr, /needs explicit text/);
+  assert.equal(existsSync(context.log), false);
+});
+
+test('agent task create accepts and attributes a positional description', () => {
+  const context = fixture();
+
+  const created = run(['hook', '--model', 'Example', '--', 'gh', 'agent-task', 'create', 'Write a short summary.'], context);
+
+  assert.equal(created.status, 0, created.stderr);
+  const forwarded = readFileSync(context.log, 'utf8');
+  assert.match(forwarded, /Write a short summary\./);
+  assert.match(forwarded, /<!-- cosplaying:attribution -->/);
+  assert.match(forwarded, /Authored by Example via/);
 });
