@@ -2,159 +2,371 @@
 
 ![COSPLAY banner showing AI attribution across a plugin ecosystem](assets/cosplay-banner.png)
 
-`cosplaying` adds a visible byline when a coding agent publishes text through a wrapped CLI. The byline names the model and points at a link you choose. It is a label a person can read. It does not prove who typed the text, and it is not a cryptographic watermark.
+`cosplaying` adds an attribution byline to text that a coding agent sends through a command-line tool. The byline identifies the model and includes a link to your AI policy.
 
-The markdown block is a visible disclosure a deployer can use when EU AI Act Article 50(4) applies. This package does not decide whether a particular comment or commit is in scope. The `AI-Assisted-By` trailer is a structured line Git can store. It is not a provider's Article 50(2) machine-readable marking solution, and this project does not claim Article 50(2) compliance.
+A plugin controls each command-line tool. The package includes plugins for Git (`git`) and the GitHub CLI (`gh`). You can also develop plugins for other tools.
 
-Replacing the templates does not remove the attribution markers. The renderer still adds `<!-- cosplaying:attribution -->` and `<!-- /cosplaying:attribution -->`.
+- [Install cosplaying](#install-cosplaying)
+- [Use plugins](#use-plugins)
+- [Set the attribution text](#set-the-attribution-text)
+- [Develop a plugin](#develop-a-plugin)
 
-## Install
+## Install cosplaying
 
-Install the package, install the hooks, trust them in each harness that asks, then run doctor.
+The software requirements are Node.js 22 or a subsequent version, and the command-line tools for your plugins.
 
-```sh
-npm install -g cosplaying
-cosplaying install
-cosplaying doctor
-```
+1. Install the package:
 
-`cosplaying install` writes the user-scope hook files even when the harness binary is not on `PATH`. A missing harness binary is information from doctor, not a failure. A missing owned hook in a managed file is a failure.
+   ```sh
+   npm install -g cosplaying
+   ```
 
-Start a new agent session after install. A session that was already open does not see the new hooks or the session prompt.
+2. Enable the applicable plugins:
 
-`--project-dir <path>` writes the project hook file instead of the user file:
+   ```sh
+   cosplaying plugin enable git
+   cosplaying plugin enable gh
+   ```
+
+3. Install the agent hooks:
+
+   ```sh
+   cosplaying install
+   ```
+
+4. Give approval for the hooks in your coding agent:
+
+   | Coding agent | Action |
+   | --- | --- |
+   | Codex | Open `/hooks`. Give approval for the cosplaying hooks. |
+   | Claude Code | Give approval for the command hooks at the Claude Code prompt. |
+   | Gemini CLI | Give approval for the hooks at the Gemini CLI prompt. |
+
+5. Start a new agent session.
+
+6. Do a check of the installation:
+
+   ```sh
+   cosplaying doctor
+   ```
+
+The install command writes hooks for Claude Code, Codex, Cursor, Gemini CLI, OpenCode, and Pi. It does not enable plugins. It writes the hook files even if an agent executable is not on `PATH`.
+
+The doctor command checks the hook files, plugins, and configuration. It cannot read hook approval from your coding agent. A missing agent executable does not cause an error.
+
+### Install hooks for a project
+
+By default, the install command writes hooks to your user configuration. For project hooks, use `--project-dir`:
 
 ```sh
 cosplaying install --project-dir /path/to/repo
 cosplaying doctor --project-dir /path/to/repo
 ```
 
-`doctor --repair` rewrites a stale Node path and moves an owned hook back to the end of the pre-tool list when `rtk hook` was appended later. That later entry removes the `cosplaying hook` prefix. After that repair, Codex must be trusted again. Codex pins trust to the hook hash, and `/hooks` is required again.
-
-## Trust the hooks
-
-Doctor does not claim that a harness has approved its hooks. Users open `/hooks` and trust the command. After `--repair` changes the command, Codex must be trusted again because trust is pinned to the hook hash. Note that approval is separate and that a new agent session is required after install.
-
-- Codex: run `/hooks` and trust the cosplaying hooks. Do this again after `doctor --repair` or any reinstall.
-- Claude Code: approve the command hooks when Claude Code asks. Project hooks live in `.claude/settings.json`.
-- Gemini CLI: approve the hooks when Gemini CLI asks. They are stored in `settings.json` under the Gemini config directory.
-
-Cursor also loads Claude Code hooks after its own. Cursor cloud agents do not run user hooks. Install with `--project-dir` when a cloud agent should see the project hooks. This hook does not run for Cursor cloud agents. Project install is how a repo covers cloud agents.
-
-## Commands
+To select one coding agent, use its harness ID:
 
 ```sh
-cosplaying hook [--model <plain text>] [--model-base64 <base64url>] [--harness <name>] -- <command> [args]
-cosplaying agent-hook <harness> <event>
-cosplaying rewrite [--shell] <command text>
-cosplaying install [--harness <name>] [--project-dir <path>]
-cosplaying uninstall [--harness <name>] [--project-dir <path>]
-cosplaying doctor [--project-dir <path>] [--repair]
-cosplaying plugin install <git-url-or-local-path>
-cosplaying plugin uninstall <name>
-cosplaying plugin list
-cosplaying plugin enable <git|gh>
-cosplaying plugin disable <git|gh>
+cosplaying install --harness codex
 ```
 
-`--model` is plain text. `--model-base64` is base64url only. An empty value, a value that starts with `-`, or a value that is not base64url is an error and the wrapped command does not run. Do not guess which flag was intended.
+A harness is the coding agent that calls the hooks. The harness IDs are `claude-code`, `codex`, `cursor`, `gemini`, `opencode`, and `pi`.
 
-When neither flag is set, `hook` uses `COSPLAYING_MODEL`, then the harness label if `--harness` is set, otherwise an empty model. An empty model does not stop the process. A plugin must refuse the write.
+Cursor cloud agents do not use user hooks. Use project hooks for those agents.
 
-`--agent` is an alias of `--harness`.
+### Repair or remove hooks
 
-## What the shell hook can see
+If the Node.js path changes, repair the hooks:
 
-The shell hook rewrites every invocation of a registered plugin command, including reads, `if` and `for`, substitutions, pipelines, `xargs`, and unquoted heredocs. It does not classify writes. The plugin decides.
+```sh
+cosplaying doctor --repair
+```
 
-The hook cannot see `bash -c "gh ..."`, `eval`, or commands inside script files. Those must call `cosplaying hook` explicitly.
+After you install or repair the hooks, give approval for the Codex hooks again through `/hooks`. Codex uses the hook hash to record approval.
 
-`rtk <command>` is rewritten to `rtk proxy <prefix> <command>` unless `proxy` is already present. `rtk run "..."` is left unchanged because the command is inside a string. `rtk` accepts arbitrary commands only through `rtk proxy`, and `rtk` itself removes a bare `rtk <command>` rewrite. This package does not run `rtk` and does not undo that deletion.
+If an `rtk hook` entry follows cosplaying, doctor moves the cosplaying hook to the end. This hook sequence prevents `rtk` from removing the cosplaying command prefix.
 
-## Configuration
+To remove user hooks:
 
-`cosmiconfig` loads the files. Zod checks each file against the settings schema, and this package supplies the defaults. Later sources replace earlier ones. Variable keys are merged. A field of the wrong type fails the command.
+```sh
+cosplaying uninstall
+```
 
-The user file is `.cosplaying.json`, `.cosplaying.yaml`, or `.cosplaying.yml` in `~/.config/cosplaying`. The project file is the nearest file with those same names, walking up from the working directory until a `package.json`.
+To remove project hooks:
 
-Pass `--model` or set `COSPLAYING_MODEL` for the invocation. A `model` or `attribution.model` field is an error. Remove it from the file.
+```sh
+cosplaying uninstall --project-dir /path/to/repo
+```
 
-Two of `.cosplaying.json`, `.cosplaying.yaml`, and `.cosplaying.yml` in the same directory is an error. Attribution stays blocked until that directory has one of those files.
+Uninstall removes only hooks that cosplaying owns. It does not replace or delete an unmarked Pi or OpenCode extension file.
+
+## Use plugins
+
+The Git and GitHub CLI plugins are off by default. To enable or disable them, use these commands:
+
+```sh
+cosplaying plugin enable git
+cosplaying plugin enable gh
+cosplaying plugin disable git
+cosplaying plugin disable gh
+```
+
+These commands change your user configuration. A project `plugins` list replaces the user list. If a project list keeps a plugin disabled, add the plugin to that list.
+
+The plugin documents give the supported operations and restrictions:
+
+| Plugin | Documentation |
+| --- | --- |
+| Git | [Git plugin](plugins/git/README.md) |
+| GitHub CLI | [GitHub CLI plugin](plugins/gh/README.md) |
+
+### Supply the model name
+
+Installed hooks supply the model from the agent session. If the session does not supply a model name, the hooks use the harness label.
+
+For a command that you enter directly, use `--model` before `--`:
+
+```sh
+cosplaying hook --model "MODEL_ID" -- gh issue view 123
+```
+
+Replace `MODEL_ID` with the current model ID. You can also set `COSPLAYING_MODEL` in the environment.
+
+For a direct command, cosplaying selects the first available model source in this sequence:
+
+1. `--model` or `--model-base64`.
+2. `COSPLAYING_MODEL`.
+3. The label for `--harness`, if you supply this option.
+
+Without these sources, the model name is empty. A plugin must stop a text write if the model name is empty.
+
+Use plain text with `--model`. Installed hooks use `--model-base64` for base64url text. An empty option value or an incorrect encoding stops the command.
+
+### Know the hook limits
+
+The shell hook changes registered plugin commands to use `cosplaying hook`. It does this for read commands and write commands. Each plugin controls attribution for its operations.
+
+The shell hook can change commands in pipelines, substitutions, loops, and unquoted heredocs. It cannot change commands inside script files, `eval` strings, or `bash -c` strings.
+
+For those commands, call `cosplaying hook` directly. For an `rtk` command prefix, the hook uses `rtk proxy`. It does not change command text inside an `rtk run` string.
+
+If a plugin stops a command, correct the input. If you cannot correct the input, get instructions from the user. Do not bypass cosplaying.
+
+### Install a plugin from a directory or repository
+
+You can install a plugin from a local directory or a GitHub repository:
+
+```sh
+cosplaying plugin install ./my-plugin
+cosplaying plugin install OWNER/REPOSITORY
+cosplaying plugin list
+```
+
+Replace `OWNER/REPOSITORY` with the GitHub owner and repository name.
+
+Installed plugins load automatically. To replace an installed plugin, first remove it:
+
+```sh
+cosplaying plugin uninstall my-plugin
+cosplaying plugin install ./my-plugin
+```
+
+## Set the attribution text
+
+Use one of these configuration filenames:
+
+- `.cosplaying.json`
+- `.cosplaying.yaml`
+- `.cosplaying.yml`
+
+For user settings, put the file in `~/.config/cosplaying`. For project settings, put the file in your project directory.
+
+`cosmiconfig` searches for project settings from the current directory. Its project search stops at a directory with `package.json`. The configuration sequence is defaults, user settings, then project settings.
+
+Subsequent settings replace previous settings. The `variables` objects merge. A project `plugins` list replaces the user list; it does not extend that list.
+
+This example enables the two included plugins and sets the attribution text:
 
 ```json
 {
   "link": "https://example.com/ai-policy",
-  "plugins": ["notify"],
+  "plugins": ["git", "gh"],
   "variables": { "team": "Docs" },
   "attribution": {
     "templates": {
-      "markdown": "Authored by {model} for {team}. [policy]({link})",
-      "trailer": "{model} via cosplaying ({link}).",
-      "session": "You are running in {harness}. Prefix {commands} with {executable} hook --model <current model id> --."
+      "markdown": "AI model: {model}. Team: {team}. [AI policy]({link}).",
+      "trailer": "{model} via cosplaying ({link})."
     }
   }
 }
 ```
 
-The default markdown line is `Authored by {model} via [cosplaying]({link}). AI Assisted text may contain mistakes, please verify.` The default trailer value is `{model} via cosplaying ({link}). AI Assisted text may contain mistakes, please verify.` The default link is `https://github.com/3rd-eden/cosplaying`.
+`{model}` contains the model name. `{link}` contains the policy URL. The `variables` object supplies other template values, such as `{team}`.
 
-Session text tells the model to write authored text in ASD-STE100 Simplified Technical English and to route supported plugin commands through this CLI.
+`replaces` fills the template values. The `{model}` tag is optional. cosplaying does not check tag names against a fixed list.
 
-## Plugins
+The default link is `https://github.com/3rd-eden/cosplaying`. The default templates are:
 
-A plugin is a Node package. `live-plugin-manager` installs it. The package `name` is the command. The default export is the function `hook` calls. `description`, `examples`, and `intercept` are optional named exports. `intercept` defaults to true. `false` means the shell hook does not rewrite that command; `hook` can still run it by name.
+| Template | Default text |
+| --- | --- |
+| `markdown` | `Authored by {model} via [cosplaying]({link}). AI Assisted text may contain mistakes, please verify.` |
+| `trailer` | `{model} via cosplaying ({link}). AI Assisted text may contain mistakes, please verify.` |
+
+The Markdown renderer adds these markers around the byline:
+
+```html
+<!-- cosplaying:attribution -->
+<!-- /cosplaying:attribution -->
+```
+
+Do not put these markers in a template. The trailer renderer adds the `AI-Assisted-By:` key. The trailer text must stay on one line. A policy URL must use HTTP or HTTPS.
+
+Do not set `model` or `attribution.model` in a configuration file. Supply the model for each command or agent session.
+
+You can also set `attribution.templates.session` to change the agent instructions. This template uses `{harness}`, `{commands}`, and `{executable}`. The default instructions specify ASD-STE100 Simplified Technical English and commands through cosplaying.
+
+## Develop a plugin
+
+A plugin is a Node.js package. Use ESM JavaScript. The package name identifies the command that the plugin controls. For a scoped package, the command name excludes the scope.
+
+For example, the included package named `git` controls the `git` command. The command executable must also be available on `PATH`.
+
+Do not use these command names for a plugin: `hook`, `agent-hook`, `rewrite`, `install`, `uninstall`, `doctor`, or `plugin`.
+
+### Create the package
+
+1. Create a directory named `my-plugin`.
+
+2. Add this `package.json` file:
+
+   ```json
+   {
+     "name": "my-plugin",
+     "version": "1.0.0",
+     "type": "module",
+     "main": "./index.js"
+   }
+   ```
+
+3. Add `my-plugin/index.js` with the entry point from the next section.
+
+4. Install the plugin:
+
+   ```sh
+   cosplaying plugin install ./my-plugin
+   ```
+
+5. Read the plugin list:
+
+   ```sh
+   cosplaying plugin list
+   ```
+
+Set `name` in `package.json` to the command that your plugin controls. The name `my-plugin` is a placeholder. For complete implementations, refer to the [Git plugin](plugins/git/index.js) and the [GitHub CLI plugin](plugins/gh/index.js).
+
+For development without an installed copy, add the plugin directory to your project configuration:
 
 ```json
 {
-  "name": "notify",
-  "version": "1.0.0",
-  "type": "module",
-  "main": "./index.js"
+  "plugins": ["git", "gh", "./my-plugin"]
 }
 ```
+
+A relative plugin path starts at the current directory.
+
+### Implement the entry point
+
+The default export is an asynchronous function with this interface:
 
 ```js
-export const description = 'Append a byline to notify --message';
-
 export default async function run(args, context) {
-  return 0;
+  // Apply the command rules here.
+  const result = await context.spawn(context.realBin, args, {
+    cwd: context.cwd,
+    env: context.env,
+    stdio: 'inherit',
+  });
+  return result?.status ?? 1;
 }
 ```
 
-`context` includes `model`, `harness`, `cwd`, `env`, `realBin`, `spawn`, and `attribution.annotateMarkdown` / `attribution.renderTrailer`. Pass `context.env` to child processes. `hook` sets `COSPLAYING_INSIDE_HOOK=1` so a nested hook of the same command runs the real binary and does not attribute twice.
+This example only passes arguments to the executable. It does not add attribution. The function must return a numeric exit code.
 
-Writes copy the body to a temp file, or a new pipe, and delete it afterward. Do not mutate the caller's source file. If the model is empty, do not spawn the write. Say that `--model` or `COSPLAYING_MODEL` is required. If a template throws, do not spawn.
+Optional named exports control help text and shell hooks:
 
-`context.block` is not required. `block` from `cosplaying/plugin` writes:
+| Export | Function |
+| --- | --- |
+| `description` | Supplies the plugin help text. |
+| `examples` | Supplies an array of example commands for help text. |
+| `intercept` | Enables automatic shell changes. The default is `true`. |
 
-```text
-cosplaying: BLOCKED (command not run)
-Reason: <reason>
-If no safe correction is stated, stop and ask the user; do not bypass cosplaying.
+If `intercept` is `false`, users can call the plugin through `cosplaying hook` directly.
+
+### Use the context
+
+cosplaying passes these values to the entry point:
+
+| Value | Function |
+| --- | --- |
+| `args` | Contains the command arguments, without the command name. |
+| `context.model` | Contains the model name or an empty string. |
+| `context.harness` | Contains the harness ID or an empty string. |
+| `context.cwd` | Contains the current directory. |
+| `context.env` | Contains the child process environment. |
+| `context.realBin` | Contains the executable path. |
+| `context.spawn` | Starts a child process and supplies its `status`. |
+| `context.stdin`, `context.stdout`, `context.stderr` | Supply the input, output, and error streams. |
+| `context.attribution.annotateMarkdown(text)` | Adds the Markdown byline to text. |
+| `context.attribution.renderTrailer()` | Supplies the `AI-Assisted-By` key and its value. |
+
+Always pass `context.env` to child processes. It contains `COSPLAYING_INSIDE_HOOK=1`. This value prevents a nested hook from adding attribution again.
+
+To select an executable directly, set `COSPLAYING_<COMMAND>_BIN` to an absolute file path. Use uppercase letters for `<COMMAND>`. Replace each character other than a letter or digit with `_`.
+
+### Control text writes
+
+Your plugin must identify the operations that write text. Apply these rules before the child process starts:
+
+1. If the model name is empty, stop the text write.
+2. Add attribution through the helpers in `context.attribution`.
+3. If an attribution helper throws an error, stop the text write.
+4. Use a temporary copy for file input.
+5. Keep the source file unchanged.
+
+Use `withAttributedCopy` from `cosplaying/plugin` for UTF-8 file input. It makes a temporary copy with mode `0600`. It removes the copy after your callback completes.
+
+To stop a command, call `block` from `cosplaying/plugin`:
+
+```js
+import { block } from 'cosplaying/plugin';
+
+block(context.stderr, 'This text write needs a model. Use --model <name> or set COSPLAYING_MODEL.');
+return 2;
 ```
 
-The reason should say which input is accepted. Return exit code 2 and do not suggest the raw CLI as a bypass.
+Put this code inside your entry point. `block` writes the error message to the error stream. It does not stop execution. Return exit code `2` before you start a child process.
 
-Install from a git URL or a local path:
+The error message must identify the incorrect input and the necessary correction. Do not recommend a command that bypasses cosplaying.
+
+For more details, refer to the [plugin API](packages/plugin/README.md) and the [attribution API](packages/attribution/README.md).
+
+## Attribution limits
+
+The byline is text that a person can read. It does not prove who wrote the text. It is not a cryptographic watermark.
+
+A deployer can use the Markdown block as a disclosure when EU AI Act Article 50(4) applies. cosplaying does not decide whether Article 50(4) applies to a text.
+
+The `AI-Assisted-By` trailer is not an Article 50(2) machine-readable marking solution. This project does not claim Article 50(2) compliance.
+
+## Command help and errors
+
+For command options:
 
 ```sh
-cosplaying plugin install ./examples/notify
-cosplaying plugin list
-cosplaying plugin uninstall notify
-cosplaying plugin enable git
-cosplaying plugin enable gh
+cosplaying --help
+cosplaying hook --help
+cosplaying plugin --help
 ```
 
-`git` and `gh` ship in `plugins/` and stay off until `plugin enable` or a `plugins` entry names them. `cosplaying install` does not turn them on. Commit, rebase, push, and GitHub write rules are in `plugins/git` and `plugins/gh`.
+`rewrite` prints command text with the hook changes. `agent-hook` processes events from a coding agent; it is not for commands that you enter directly.
 
-`COSPLAYING_<COMMAND>_BIN` overrides PATH lookup when it is an absolute path to a file. `<COMMAND>` is the command token uppercased, with non-alphanumerics turned into `_`.
-
-## Errors
-
-[Error catalog](docs/errors.md).
-
-## Harnesses
-
-Supported ids are `claude-code`, `codex`, `cursor`, `gemini`, `opencode`, and `pi`.
-
-Owned JSON or shell hooks end with `# cosplaying:<harness>`. Pi and OpenCode files start with `// cosplaying:<harness>`. Install removes owned entries and appends new ones so ours stay last. Foreign keys are preserved. Uninstall removes owned hooks only. An unmanaged Pi or OpenCode file is not replaced or deleted.
+For error causes and corrections, refer to the [error catalog](docs/errors.md).
