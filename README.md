@@ -149,7 +149,7 @@ cosplaying plugin enable gh
 
 ## Errors
 
-User-facing failures throw `CosplayError` from `cosplaying/errors`. That class extends `LayerError` from `@mcp-layer/error` and sets this project's scope and docs. The message says what happened, the bad value or path, and the next action.
+[Error catalog](docs/errors.md).
 
 ## Harnesses
 
