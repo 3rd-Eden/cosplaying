@@ -1,6 +1,6 @@
 # git
 
-Shipped plugin and a working example of a cosplaying plugin. The package `name` is the command. The default export is the function `hook` calls.
+This plugin adds attribution to Git commits and examines outgoing commits before a push. It controls the `git` command. The plugin does not install Git.
 
 ```sh
 cosplaying plugin enable git
@@ -28,4 +28,8 @@ Rebase commits are chosen from new HEAD reflog entries. A signed commit is not r
 
 `push` with a model blocks outgoing commits from the local committer that lack `AI-Assisted-By`. The push does not run. With no model, the push is not checked. Other Git commands pass through.
 
-Cosplaying checks each explicit or configured refspec against its destination ref. It blocks matching and wildcard refspecs, and it blocks `--all`, `--mirror`, and `--tags` because it cannot inspect those pushes as single refs.
+For a push with a model, cosplaying examines each explicit or configured refspec against its destination ref. It stops matching, negative, and wildcard refspecs. It also stops `--all`, `--mirror`, and `--tags`. Those options can send multiple refs.
+
+Dry runs and ref deletions do not use the outgoing commit check. If cosplaying cannot determine or inspect a push destination, it stops the push.
+
+For the plugin interface, refer to the [main README](../../README.md#develop-a-plugin) and the [plugin API](../../packages/plugin/README.md).

@@ -15,11 +15,15 @@ A missing or empty model throws. An empty link stays empty. Any other link must 
 ## Public API
 
 - `ATTRIBUTION_MARKER` is `<!-- cosplaying:attribution -->`. `ATTRIBUTION_END_MARKER` is `<!-- /cosplaying:attribution -->`.
-- `normalizeIdentity(value)` trims and collapses internal whitespace.
+- `normalizeIdentity(value)` trims and collapses internal whitespace. A missing, null, or empty value becomes an empty string.
 - `validateLink(link)` returns `''` for `undefined`, `null`, or `''`. Any other value must be an `http:` or `https:` URL. The result is `url.href`.
-- `stripAttribution(value)` removes one trailing managed block, including the whitespace before it, when the trimmed text ends with the closing marker and an opening marker precedes it. Any other text is returned unchanged.
-- `annotateMarkdown(value, { model, template, link, variables })` strips one trailing block, trims the body, and appends a blank line when the body is non-empty, then the opening marker, the rendered template, the closing marker, and a final newline. The model is escaped for Markdown. Whitespace, parentheses, and angle brackets in the link are percent-encoded. `{name}` tags are filled by `replaces` from the checked model, the checked link, and `variables`.
-- `renderTrailer(model, { template, link, variables })` returns `AI-Assisted-By: ` plus one rendered line. A multiline or NUL result throws.
+- `stripAttribution(value)` removes one trailing managed block and the whitespace before it. The trimmed text must end with the closing marker. An opening marker must precede that marker. Any other text is returned unchanged.
+- `annotateMarkdown(value, { model, template, link, variables })` removes one trailing block and whitespace from the end of the body. It adds a blank line after a non-empty body. Then it adds the opening marker, template text, closing marker, and final newline. The model is escaped for Markdown. Whitespace, parentheses, and angle brackets in the link are percent-encoded. `{name}` tags are filled by `replaces` from the checked model, the checked link, and `variables`.
+- `renderTrailer(model, { template, link, variables })` returns `AI-Assisted-By: ` plus one rendered line. A result with a carriage return or newline throws.
+
+The renderer functions do not supply default templates or links. For default wording, direct callers must supply a template. The CLI supplies its configured template, link, and variables.
+
+The `{model}` tag is optional. `replaces` fills the supplied values without a fixed list of tag names.
 
 ## Related packages
 
