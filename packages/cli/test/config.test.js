@@ -21,7 +21,7 @@ test('defaults, then the user file, then the nearest project file', () => {
   const cwd = temp();
   const user = userConfigDirectory({ home });
   mkdirSync(user, { recursive: true });
-  writeFileSync(path.join(user, 'config.json'), JSON.stringify({
+  writeFileSync(path.join(user, '.cosplaying.json'), JSON.stringify({
     link: 'https://example.com/user',
     variables: { team: 'user', owner: 'kept' },
     attribution: { templates: { markdown: 'user {model}' } },
@@ -158,7 +158,7 @@ test('hook trailer keeps a user variable and lets the project replace the same k
   try {
     const userDir = userConfigDirectory({ home });
     mkdirSync(userDir, { recursive: true });
-    writeFileSync(path.join(userDir, 'config.json'), `${JSON.stringify({
+    writeFileSync(path.join(userDir, '.cosplaying.json'), `${JSON.stringify({
       variables: { team: 'user', owner: 'kept' },
       attribution: { templates: { trailer: '{model} {team} {owner}' } },
     })}\n`);

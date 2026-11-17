@@ -944,76 +944,6 @@ cosplaying plugin uninstall git
 
 </details>
 
-<a id="error-33f81cd8"></a>
-### settings directory %s has more than one config file: %s. Keep one of config.json, config.yaml, or config.yml and delete the others.
-
-Thrown from: `plugin`
-
-Catalog id: `cli.plugin-user-config-many`
-
-`cli(plugin)`
-
-Enable and disable write `config.json`. A second user settings file would leave two sources.
-
-Step-by-step resolution:
-1. Keep one of config.json, config.yaml, or config.yml and delete the others.
-
-<details>
-<summary>Example</summary>
-
-```js
-rm ~/.config/cosplaying/config.yaml
-```
-
-</details>
-
-<a id="error-bdd818e0"></a>
-### user settings file %s is YAML. Add "%s" to the plugins list in that file.
-
-Thrown from: `plugin`
-
-Catalog id: `cli.plugin-user-config-yaml`
-
-`cli(plugin)`
-
-Enable writes JSON. A YAML user file stays the file you edit.
-
-Step-by-step resolution:
-1. Add "git" or "gh" to the plugins list in that file.
-
-<details>
-<summary>Example</summary>
-
-```yaml
-plugins:
-  - git
-```
-
-</details>
-
-<a id="error-3f3cdf88"></a>
-### settings file %s is not a JSON object. Replace it with an object that contains a plugins array, or delete the file.
-
-Thrown from: `plugin`
-
-Catalog id: `cli.plugin-user-config-shape`
-
-`cli(plugin)`
-
-The user settings file has to be one object so `plugins` can be updated.
-
-Step-by-step resolution:
-1. Replace it with an object that contains a plugins array, or delete the file.
-
-<details>
-<summary>Example</summary>
-
-```json
-{ "plugins": ["git"] }
-```
-
-</details>
-
 <a id="error-c4803d83"></a>
 ### plugin %s is enabled in %s. Remove "%s" from the plugins list in that file.
 
@@ -1023,7 +953,7 @@ Catalog id: `cli.plugin-enabled-elsewhere`
 
 `cli(plugin)`
 
-Disable edits `~/.config/cosplaying/config.json`. A project file or a YAML user file is edited by hand.
+Disable edits the user `.cosplaying` file. A project `.cosplaying` file that still names the plugin has to be edited in that file.
 
 Step-by-step resolution:
 1. Remove "git" or "gh" from the plugins list in that file.

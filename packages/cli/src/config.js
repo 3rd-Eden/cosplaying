@@ -14,13 +14,16 @@ export const DEFAULT_MARKDOWN = 'Authored by {model} via [cosplaying]({link}). A
 /** @type {string} */
 export const DEFAULT_TRAILER = '{model} via cosplaying ({link}). AI Assisted text may contain mistakes, please verify.';
 
+/** The only settings filenames. User and project files use the same names. */
+export const CONFIG_NAMES = ['.cosplaying.json', '.cosplaying.yaml', '.cosplaying.yml'];
+
 const projectConfig = cosmiconfigSync('cosplaying', {
-  searchPlaces: ['.cosplaying.json', '.cosplaying.yaml', '.cosplaying.yml'],
+  searchPlaces: CONFIG_NAMES,
   searchStrategy: 'project',
 });
 
 const userConfig = cosmiconfigSync('cosplaying', {
-  searchPlaces: ['config.json', 'config.yaml', 'config.yml'],
+  searchPlaces: CONFIG_NAMES,
   searchStrategy: 'none',
 });
 
@@ -44,13 +47,11 @@ function merge(base, overlay) {
   };
 }
 
-const PROJECT_CONFIG_NAMES = ['.cosplaying.json', '.cosplaying.yaml', '.cosplaying.yml'];
-
 /**
  * @param {string} directory
  * @param {string[]} names
  */
-function assertSingleConfig(directory, names) {
+export function assertSingleConfig(directory, names = CONFIG_NAMES) {
   const present = names.filter((name) => existsSync(path.join(directory, name)));
   if (present.length < 2) return;
   throw new CosplayError({
@@ -85,6 +86,7 @@ function rejectConfigModel(file, config) {
  * @returns {import('cosmiconfig').CosmiconfigResult}
  */
 function searchConfig(explorer, directory) {
+  explorer.clearCaches();
   try {
     return explorer.search(directory);
   } catch (error) {
@@ -122,20 +124,6 @@ function read(explorer, directory, names) {
   return parsed.data;
 }
 
-const USER_CONFIG_NAMES = ['config.json', 'config.yaml', 'config.yml'];
-
-/**
- * User settings files that exist. Cosmiconfig would return only the first.
- * @param {{home?: string}} [options]
- * @returns {string[]}
- */
-export function userConfigFiles({ home = homedir() } = {}) {
-  const directory = userConfigDirectory({ home });
-  return USER_CONFIG_NAMES
-    .filter((name) => existsSync(path.join(directory, name)))
-    .map((name) => path.join(directory, name));
-}
-
 /**
  * The project settings file cosmiconfig would load, including its raw contents.
  * @param {{cwd?: string}} [options]
@@ -144,7 +132,7 @@ export function userConfigFiles({ home = homedir() } = {}) {
 export function findProjectConfig({ cwd = process.cwd() } = {}) {
   const found = searchConfig(projectConfig, cwd);
   if (!found) return null;
-  assertSingleConfig(path.dirname(found.filepath), PROJECT_CONFIG_NAMES);
+  assertSingleConfig(path.dirname(found.filepath));
   return found;
 }
 
@@ -173,7 +161,7 @@ export function loadConfig({ cwd = process.cwd(), home = homedir() } = {}) {
   const merged = [
     defaults,
     read(userConfig, userConfigDirectory({ home })),
-    read(projectConfig, cwd, PROJECT_CONFIG_NAMES),
+    read(projectConfig, cwd, CONFIG_NAMES),
   ].reduce(merge);
   return configSchema.parse(merged);
 }

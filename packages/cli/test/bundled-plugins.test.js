@@ -59,7 +59,7 @@ test('plugin enable writes the user config and disable removes the name', () => 
   const enabled = run(['plugin', 'enable', 'git'], home, cwd);
   assert.equal(enabled.status, 0, enabled.stderr);
   assert.equal(enabled.stdout, `git\t${gitPlugin}\n`);
-  const file = path.join(home, '.config', 'cosplaying', 'config.json');
+  const file = path.join(home, '.config', 'cosplaying', '.cosplaying.json');
   const written = readFileSync(file, 'utf8');
   assert.deepEqual(JSON.parse(written).plugins, ['git']);
   const listed = run(['plugin', 'list'], home, cwd);
@@ -85,21 +85,22 @@ test('plugin enable writes the user config and disable removes the name', () => 
   assert.equal(after.stdout, '');
 });
 
-test('enable refuses YAML, a second user file, and an installed copy', () => {
+test('enable edits a yaml settings file, rejects a second file, and rejects an installed copy', () => {
   const yamlHome = isolated();
   const directory = path.join(yamlHome.home, '.config', 'cosplaying');
   mkdirSync(directory, { recursive: true });
-  writeFileSync(path.join(directory, 'config.yaml'), 'plugins: []\n');
+  const yamlFile = path.join(directory, '.cosplaying.yaml');
+  writeFileSync(yamlFile, 'plugins: []\n');
   const yaml = run(['plugin', 'enable', 'git'], yamlHome.home, yamlHome.cwd);
-  assert.equal(yaml.status, 1);
-  assert.match(yaml.stderr, /config\.yaml is YAML/);
-  assert.equal(existsSync(path.join(directory, 'config.json')), false);
+  assert.equal(yaml.status, 0, yaml.stderr);
+  assert.equal(existsSync(path.join(directory, '.cosplaying.json')), false);
+  assert.deepEqual(JSON.parse(readFileSync(yamlFile, 'utf8')).plugins, ['git']);
 
   const many = isolated();
   const manyDir = path.join(many.home, '.config', 'cosplaying');
   mkdirSync(manyDir, { recursive: true });
-  writeFileSync(path.join(manyDir, 'config.json'), '{}\n');
-  writeFileSync(path.join(manyDir, 'config.yml'), 'plugins: []\n');
+  writeFileSync(path.join(manyDir, '.cosplaying.json'), '{}\n');
+  writeFileSync(path.join(manyDir, '.cosplaying.yml'), 'plugins: []\n');
   const both = run(['plugin', 'enable', 'gh'], many.home, many.cwd);
   assert.equal(both.status, 1);
   assert.match(both.stderr, /more than one config file/);

@@ -1,59 +1,24 @@
-import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { CosplayError } from 'cosplaying/errors';
 import { writeJsonAtomic } from 'cosplaying/hooks';
 import { listPlugins } from 'cosplaying/plugin';
 import { bundledPlugins } from './bundled.js';
-import { fileSchema, schemaIssues } from './config-schema.js';
-import { findProjectConfig, findUserConfig, userConfigDirectory, userConfigFiles } from './config.js';
+import {
+  CONFIG_NAMES,
+  assertSingleConfig,
+  findProjectConfig,
+  findUserConfig,
+  userConfigDirectory,
+} from './config.js';
 
 /**
  * @param {unknown} config
- * @returns {string[] | null}
+ * @returns {string[]}
  */
-function pluginNames(config) {
-  if (!config || typeof config !== 'object' || Array.isArray(config)) return null;
-  if (!Object.hasOwn(config, 'plugins')) return [];
-  const plugins = /** @type {{plugins?: unknown}} */ (config).plugins;
-  if (!Array.isArray(plugins) || plugins.some((entry) => typeof entry !== 'string')) return null;
-  return plugins;
-}
-
-/**
- * @param {string} file
- * @param {unknown} config
- */
-function assertSettings(file, config) {
-  if (!config || typeof config !== 'object' || Array.isArray(config)) {
-    throw new CosplayError({
-      name: 'cli',
-      method: 'plugin',
-      message: 'settings file %s is not a JSON object. Replace it with an object that contains a plugins array, or delete the file.',
-      args: [file],
-    });
-  }
-  const parsed = fileSchema.safeParse(config);
-  if (!parsed.success) {
-    throw new CosplayError({
-      name: 'cli',
-      method: 'loadConfig',
-      message: 'settings file %s does not match the config schema: %s. Edit that file so link, plugins, variables, and attribution.templates match the documented shape, or delete the file to use the defaults.',
-      args: [file, schemaIssues(parsed.error)],
-    });
-  }
-}
-
-/**
- * @param {string[]} files
- */
-function assertOneUserFile(files) {
-  if (files.length < 2) return;
-  throw new CosplayError({
-    name: 'cli',
-    method: 'plugin',
-    message: 'settings directory %s has more than one config file: %s. Keep one of config.json, config.yaml, or config.yml and delete the others.',
-    args: [path.dirname(files[0]), files.map((file) => path.basename(file)).join(', ')],
-  });
+function pluginList(config) {
+  if (!config || typeof config !== 'object' || Array.isArray(config)) return [];
+  const plugins = /** @type {{ plugins?: string[] }} */ (config).plugins;
+  return plugins ?? [];
 }
 
 /**
@@ -72,31 +37,24 @@ function assertShipped(name, shipped) {
 
 /**
  * @param {string} file
- * @returns {Record<string, unknown>}
+ * @param {Record<string, unknown>} data
  */
-function readJson(file) {
-  try {
-    return JSON.parse(readFileSync(file, 'utf8'));
-  } catch (error) {
-    throw new CosplayError({
-      name: 'cli',
-      method: 'loadConfig',
-      message: 'settings file %s could not be read: %s. Fix the JSON or YAML syntax, or delete the file to use the defaults.',
-      args: [file, error.message],
-      cause: error,
-    });
-  }
+function writeConfig(file, data) {
+  writeJsonAtomic(file, data);
 }
 
 /**
- * @param {string} name
- * @param {import('cosmiconfig').CosmiconfigResult} found
- * @param {string[]} holders
+ * @param {{home?: string}} context
+ * @returns {{ file: string, data: Record<string, unknown> }}
  */
-function hold(name, found, holders) {
-  if (!found) return;
-  const names = pluginNames(found.config);
-  if (names?.includes(name)) holders.push(found.filepath);
+function userSettings(context) {
+  const directory = userConfigDirectory(context);
+  assertSingleConfig(directory);
+  const found = findUserConfig(context);
+  if (!found) {
+    return { file: path.join(directory, CONFIG_NAMES[0]), data: {} };
+  }
+  return { file: found.filepath, data: { ...found.config } };
 }
 
 /**
@@ -118,25 +76,11 @@ export async function enableBundledPlugin(name, context) {
         args: [name, conflict.directory, name],
       });
     }
-    const files = userConfigFiles(context);
-    assertOneUserFile(files);
-    const yaml = files.find((file) => !file.endsWith('.json'));
-    if (yaml) {
-      throw new CosplayError({
-        name: 'cli',
-        method: 'plugin',
-        message: 'user settings file %s is YAML. Add "%s" to the plugins list in that file.',
-        args: [yaml, name],
-      });
-    }
-    const file = path.join(userConfigDirectory(context), 'config.json');
-    /** @type {Record<string, unknown>} */
-    const data = files.length ? readJson(file) : {};
-    assertSettings(file, data);
-    const current = pluginNames(data) ?? [];
-    if (!current.includes(name)) {
-      data.plugins = [...current, name];
-      writeJsonAtomic(file, data);
+    const { file, data } = userSettings(context);
+    const plugins = pluginList(data);
+    if (!plugins.includes(name)) {
+      data.plugins = [...plugins, name];
+      writeConfig(file, data);
     }
     return { ok: true, name, directory: shipped[name] };
   } catch (error) {
@@ -162,35 +106,21 @@ export async function enableBundledPlugin(name, context) {
 export async function disableBundledPlugin(name, context) {
   try {
     assertShipped(name, bundledPlugins());
-    const files = userConfigFiles(context);
-    assertOneUserFile(files);
-    const json = files.find((file) => file.endsWith(`${path.sep}config.json`));
-    if (json) {
-      const data = readJson(json);
-      assertSettings(json, data);
-      const current = pluginNames(data) ?? [];
-      if (current.includes(name)) {
-        data.plugins = current.filter((entry) => entry !== name);
-        writeJsonAtomic(json, data);
-        return { ok: true, name };
-      }
-    }
-    /** @type {string[]} */
-    const holders = [];
-    if (!json && files.length === 1) {
-      const user = findUserConfig(context);
-      assertSettings(files[0], user?.config);
-      hold(name, user, holders);
+    const directory = userConfigDirectory(context);
+    assertSingleConfig(directory);
+    const found = findUserConfig(context);
+    if (found && pluginList(found.config).includes(name)) {
+      const data = { ...found.config };
+      data.plugins = pluginList(data).filter((entry) => entry !== name);
+      writeConfig(found.filepath, data);
     }
     const project = findProjectConfig(context);
-    if (project) assertSettings(project.filepath, project.config);
-    hold(name, project, holders);
-    if (holders.length) {
+    if (project && pluginList(project.config).includes(name)) {
       throw new CosplayError({
         name: 'cli',
         method: 'plugin',
         message: 'plugin %s is enabled in %s. Remove "%s" from the plugins list in that file.',
-        args: [name, holders.join(', '), name],
+        args: [name, project.filepath, name],
       });
     }
     return { ok: true, name };

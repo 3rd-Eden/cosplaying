@@ -73,7 +73,7 @@ The hook cannot see `bash -c "gh ..."`, `eval`, or commands inside script files.
 
 `cosmiconfig` loads the files. Zod checks each file against the settings schema, and this package supplies the defaults. Later sources replace earlier ones. Variable keys are merged. A field of the wrong type fails the command.
 
-The user file is `config.json`, `config.yaml`, or `config.yml` in `~/.config/cosplaying`. The project file is the nearest `.cosplaying.json`, `.cosplaying.yaml`, or `.cosplaying.yml`, walking up from the working directory until a `package.json`.
+The user file is `.cosplaying.json`, `.cosplaying.yaml`, or `.cosplaying.yml` in `~/.config/cosplaying`. The project file is the nearest file with those same names, walking up from the working directory until a `package.json`.
 
 Pass `--model` or set `COSPLAYING_MODEL` for the invocation. A `model` or `attribution.model` field is an error. Remove it from the file.
 

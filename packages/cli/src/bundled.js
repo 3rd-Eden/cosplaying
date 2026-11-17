@@ -1,11 +1,8 @@
-import { existsSync } from 'node:fs';
+import { existsSync, readdirSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const root = fileURLToPath(new URL('../../../', import.meta.url));
-
-/** Shipped plugins. They stay off until a config plugins entry names them. */
-const SHIPPED = ['git', 'gh'];
+const root = fileURLToPath(new URL('../../../plugins', import.meta.url));
 
 /**
  * Directories of shipped plugins that are present in this package.
@@ -13,9 +10,15 @@ const SHIPPED = ['git', 'gh'];
  */
 export function bundledPlugins() {
   /** @type {Record<string, string>} */
-  const bundled = {};
-  for (const name of SHIPPED) {
-    const directory = path.join(root, 'plugins', name);
+  const bundled = Object.create(null);
+  let names;
+  try {
+    names = readdirSync(root);
+  } catch {
+    return bundled;
+  }
+  for (const name of names) {
+    const directory = path.join(root, name);
     if (existsSync(path.join(directory, 'package.json'))) bundled[name] = directory;
   }
   return bundled;
