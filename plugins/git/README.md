@@ -27,3 +27,5 @@ Rebase commits are chosen from new HEAD reflog entries. A signed commit is not r
 ## Push
 
 `push` with a model blocks outgoing commits from the local committer that lack `AI-Assisted-By`. The push does not run. With no model, the push is not checked. Other Git commands pass through.
+
+Cosplaying checks each explicit or configured refspec against its destination ref. It blocks matching and wildcard refspecs, and it blocks `--all`, `--mirror`, and `--tags` because it cannot inspect those pushes as single refs.

@@ -115,6 +115,34 @@ test('a commit after a supported global option receives a trailer', () => {
   assert.match(git(['log', '-1', '--format=%B'], fixture.env, fixture.repo), /AI-Assisted-By: Example via cosplaying/);
 });
 
+test('separated Git global options work, and attached -C and -c forms fail closed', () => {
+  const fixture = repository();
+  const remote = path.join(fixture.home, 'origin.git');
+  git(['init', '--quiet', '--bare', '--initial-branch=main', remote], fixture.env, fixture.repo);
+  git(['remote', 'add', 'origin', remote], fixture.env, fixture.repo);
+  const supported = ['-C', fixture.repo, '-c', 'user.name=Example'];
+  const committed = run(['hook', '--model', 'Example', '--', 'git', ...supported, 'commit', '--quiet', '--allow-empty', '-m', 'separated globals'], fixture);
+  assert.equal(committed.status, 0, committed.stderr);
+  const pushed = run(['hook', '--model', 'Example', '--', 'git', ...supported, 'push', '--quiet', '--set-upstream', 'origin', 'main'], fixture);
+  assert.equal(pushed.status, 0, pushed.stderr);
+
+  const local = unattributed(fixture.repo, fixture.env, 'Local commit for blocked pushes');
+  const remoteHead = git(['--git-dir', remote, 'rev-parse', 'main'], fixture.env, fixture.repo).trim();
+  for (const option of [`-C${fixture.repo}`, '-cuser.name=Example']) {
+    for (const command of ['commit', 'push']) {
+      const args = command === 'commit'
+        ? [command, '--quiet', '--allow-empty', '-m', 'must not run']
+        : [command, '--quiet'];
+      const blocked = run(['hook', '--model', 'Example', '--', 'git', option, ...args], fixture);
+      assert.equal(blocked.status, 2, blocked.stderr);
+      assert.match(blocked.stderr, /BLOCKED \(command not run\)/);
+      assert.match(blocked.stderr, /cannot classify the Git command after option/);
+    }
+  }
+  assert.equal(git(['rev-parse', 'HEAD'], fixture.env, fixture.repo).trim(), local);
+  assert.equal(git(['--git-dir', remote, 'rev-parse', 'main'], fixture.env, fixture.repo).trim(), remoteHead);
+});
+
 test('git version remains available without attribution', () => {
   const fixture = repository();
 
@@ -354,7 +382,7 @@ test('push checks every configured push url', () => {
   assert.equal(remoteRef, '');
 });
 
-test('push blocks a configured remote refspec the hook cannot inspect', () => {
+test('push inspects configured remote refspecs before sending them', () => {
   const fixture = repository();
   const remote = path.join(fixture.home, 'origin.git');
   git(['init', '--quiet', '--bare', '--initial-branch=main', remote], fixture.env, fixture.repo);
@@ -364,7 +392,7 @@ test('push blocks a configured remote refspec the hook cannot inspect', () => {
   const pushedBase = run(['hook', '--model', 'Example', '--', 'git', 'push', '--quiet', '--set-upstream', 'origin', 'main'], fixture);
   assert.equal(pushedBase.status, 0, pushedBase.stderr);
   git(['checkout', '-q', '-b', 'other'], fixture.env, fixture.repo);
-  unattributed(fixture.repo, fixture.env, 'Unattributed other branch');
+  const sha = unattributed(fixture.repo, fixture.env, 'Unattributed other branch');
   git(['checkout', '-q', 'main'], fixture.env, fixture.repo);
   git(['config', '--add', 'remote.origin.push', 'refs/heads/other:refs/heads/published'], fixture.env, fixture.repo);
 
@@ -372,8 +400,43 @@ test('push blocks a configured remote refspec the hook cannot inspect', () => {
 
   assert.equal(pushed.status, 2);
   assert.match(pushed.stderr, /BLOCKED \(command not run\)/);
+  assert.match(pushed.stderr, new RegExp(sha.slice(0, 12)));
   const remoteRef = git(['--git-dir', remote, 'for-each-ref', '--format=%(refname)', 'refs/heads/published'], fixture.env, fixture.repo);
   assert.equal(remoteRef, '');
+});
+
+test('push blocks the matching refspec because it can publish other branches', () => {
+  const fixture = repository();
+  const remote = path.join(fixture.home, 'origin.git');
+  git(['init', '--quiet', '--bare', '--initial-branch=main', remote], fixture.env, fixture.repo);
+  git(['remote', 'add', 'origin', remote], fixture.env, fixture.repo);
+  const base = run(['hook', '--model', 'Example', '--', 'git', 'commit', '--quiet', '--allow-empty', '-m', 'base'], fixture);
+  assert.equal(base.status, 0, base.stderr);
+  const pushed = run(['hook', '--model', 'Example', '--', 'git', 'push', '--quiet', 'origin', ':'], fixture);
+
+  assert.equal(pushed.status, 2);
+  assert.match(pushed.stderr, /BLOCKED \(command not run\)/);
+  assert.match(pushed.stderr, /matching push refspecs/);
+  assert.equal(git(['--git-dir', remote, 'for-each-ref', '--format=%(refname)'], fixture.env, fixture.repo), '');
+});
+
+test('push checks only the selected destination ref on a remote', () => {
+  const fixture = repository();
+  const remote = path.join(fixture.home, 'origin.git');
+  git(['init', '--quiet', '--bare', '--initial-branch=main', remote], fixture.env, fixture.repo);
+  git(['remote', 'add', 'origin', remote], fixture.env, fixture.repo);
+  const base = run(['hook', '--model', 'Base', '--', 'git', 'commit', '--quiet', '--allow-empty', '-m', 'base'], fixture);
+  assert.equal(base.status, 0, base.stderr);
+  git(['push', '--quiet', '--set-upstream', 'origin', 'main'], fixture.env, fixture.repo);
+  const sha = unattributed(fixture.repo, fixture.env, 'Already on another remote branch');
+  git(['push', '--quiet', 'origin', 'HEAD:refs/heads/known'], fixture.env, fixture.repo);
+
+  const pushed = run(['hook', '--model', 'Example', '--', 'git', 'push', '--quiet', 'origin', 'HEAD:refs/heads/new'], fixture);
+
+  assert.equal(pushed.status, 2);
+  assert.match(pushed.stderr, /BLOCKED \(command not run\)/);
+  assert.match(pushed.stderr, new RegExp(sha.slice(0, 12)));
+  assert.equal(git(['--git-dir', remote, 'for-each-ref', '--format=%(refname)', 'refs/heads/new'], fixture.env, fixture.repo), '');
 });
 
 test('push blocks matching branches when another branch has no trailer', () => {

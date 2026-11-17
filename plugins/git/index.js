@@ -351,7 +351,11 @@ function outgoingCommits(bin, args, info, options) {
   const branchPushRemote = branch ? captureGit(bin, [...prefix, 'config', '--get', `branch.${branch}.pushRemote`], options) : null;
   const defaultPushRemote = captureGit(bin, [...prefix, 'config', '--get', 'remote.pushDefault'], options);
   const upstreamRef = String(upstream || '').trim();
-  const upstreamRemote = upstreamRef.split('/')[0];
+  const configuredRemotes = String(captureGit(bin, [...prefix, 'remote'], options) || '').split(/\r?\n/).filter(Boolean);
+  const upstreamRemote = configuredRemotes
+    .filter((name) => upstreamRef.startsWith(`${name}/`))
+    .sort((left, right) => right.length - left.length)[0] || upstreamRef.split('/')[0];
+  const upstreamBranch = upstreamRef.startsWith(`${upstreamRemote}/`) ? upstreamRef.slice(upstreamRemote.length + 1) : '';
   const positional = [];
   let optionRemote;
   const valuedOptions = new Set(['-o', '--push-option', '--receive-pack', '--exec', '--repo', '--recurse-submodules']);
@@ -380,14 +384,18 @@ function outgoingCommits(bin, args, info, options) {
     const targets = String(output).trim().split(/\r?\n/).filter(Boolean);
     return targets.length ? targets : null;
   };
-  const commitsFor = (source) => {
+  const commitsFor = (source, destination) => {
+    if (!destination) return null;
     const targets = pushTargets();
     if (!targets) return null;
     const commits = new Map();
     for (const target of targets) {
-      const output = captureGit(bin, [...prefix, 'ls-remote', '--refs', target], options);
+      const output = captureGit(bin, [...prefix, 'ls-remote', '--refs', target, destination], options);
       if (output === null) return null;
-      const tips = String(output).trim().split(/\r?\n/).filter(Boolean).map((line) => line.split(/\s+/, 1)[0]);
+      const tips = String(output).trim().split(/\r?\n/).filter(Boolean).flatMap((line) => {
+        const [sha, ref] = line.split(/\s+/);
+        return ref === destination ? [sha] : [];
+      });
       const knownTips = tips.filter((sha) => captureGit(bin, [...prefix, 'cat-file', '-e', `${sha}^{commit}`], options) !== null);
       const outgoing = branchCommits(knownTips.length ? [source, '--not', ...knownTips] : [source]);
       if (!outgoing) return null;
@@ -395,24 +403,50 @@ function outgoingCommits(bin, args, info, options) {
     }
     return [...commits.values()];
   };
-  if (refspecs.length) {
+  const destinationFor = (source, destination) => {
+    if (destination?.startsWith('refs/')) return destination;
+    const sourceRef = String(captureGit(bin, [...prefix, 'rev-parse', '--symbolic-full-name', source], options) || '').trim();
+    if (!sourceRef.startsWith('refs/')) return null;
+    if (!destination) return sourceRef;
+    if (sourceRef.startsWith('refs/heads/')) return `refs/heads/${destination}`;
+    if (sourceRef.startsWith('refs/tags/')) return `refs/tags/${destination}`;
+    return null;
+  };
+  const inspectRefspecs = (specs) => {
     const commits = new Map();
-    for (const refspec of refspecs) {
-      const [sourceSpec, destinationSpec] = refspec.replace(/^\+/, '').split(':', 2);
-      const source = sourceSpec;
-      if (!source || source.startsWith('^')) continue;
+    for (const refspec of specs) {
+      const normalized = refspec.replace(/^\+/, '');
+      const separator = normalized.indexOf(':');
+      const source = separator < 0 ? normalized : normalized.slice(0, separator);
+      const destinationSpec = separator < 0 ? undefined : normalized.slice(separator + 1);
+      if (!source && !destinationSpec) {
+        return gitError('matching push refspecs can send other branches. Pass one explicit source:destination refspec at a time through cosplaying hook.');
+      }
+      if (!source) continue;
+      if (source.startsWith('^')) {
+        return gitError('negative push refspecs cannot be inspected. Pass an explicit source:destination refspec through cosplaying hook.');
+      }
       if (source.includes('*') || destinationSpec?.includes('*')) {
         return gitError('wildcard push refspecs can send multiple refs. Pass one explicit refspec at a time through cosplaying hook.');
       }
-      const outgoing = commitsFor(source);
+      if (separator >= 0 && destinationSpec === '') {
+        return gitError('could not determine the destination ref for push refspec %s. Pass an explicit source:destination refspec through cosplaying hook.', [refspec]);
+      }
+      const destination = destinationFor(source, destinationSpec);
+      if (!destination) {
+        return gitError('could not determine the destination ref for push refspec %s. Pass an explicit source:destination refspec through cosplaying hook.', [refspec]);
+      }
+      const outgoing = commitsFor(source, destination);
       if (!outgoing) return null;
       for (const commit of outgoing) commits.set(commit.sha, commit);
     }
     return [...commits.values()];
-  }
+  };
+  if (refspecs.length) return inspectRefspecs(refspecs);
   const remotePush = captureGit(bin, [...prefix, 'config', '--get-all', `remote.${remote}.push`], options);
   if (remotePush !== null && String(remotePush).trim()) {
-    return gitError('push configuration for remote %s sets refspecs. Pass explicit refspecs through cosplaying hook, or remove that setting.', [remote]);
+    const configuredRefspecs = String(remotePush).trim().split(/\r?\n/).filter(Boolean);
+    return inspectRefspecs(configuredRefspecs);
   }
   const pushDefaultValue = captureGit(bin, [...prefix, 'config', '--get', 'push.default'], options);
   const pushDefault = String(pushDefaultValue || 'simple').trim().toLowerCase();
@@ -423,16 +457,18 @@ function outgoingCommits(bin, args, info, options) {
   if (!['simple', 'upstream', 'current'].includes(pushDefault)) {
     return gitError('could not determine which branches this push will send. Configure push.default or pass an explicit refspec through cosplaying hook.');
   }
-  if (pushDefault !== 'current' && !upstreamRef) {
+  if (pushDefault !== 'current' && (!upstreamRef || !upstreamBranch)) {
     return gitError('could not identify the upstream branch for this push. Set an upstream or pass an explicit refspec through cosplaying hook.');
   }
   if (pushDefault !== 'current' && explicitRemote && explicitRemote !== upstreamRemote) {
     return gitError('push destination %s does not match the upstream remote %s. Pass an explicit refspec through cosplaying hook.', [explicitRemote, upstreamRemote]);
   }
-  if (pushDefault === 'simple' && upstreamRef.split('/').at(-1) !== branch) {
+  if (pushDefault === 'simple' && upstreamBranch !== branch) {
     return gitError('the upstream branch does not match the current branch. Pass an explicit refspec through cosplaying hook.');
   }
-  return commitsFor('HEAD');
+  const destinationBranch = pushDefault === 'current' ? branch : upstreamBranch;
+  if (!destinationBranch) return gitError('could not determine the destination branch for this push. Set an upstream or pass an explicit refspec through cosplaying hook.');
+  return commitsFor('HEAD', `refs/heads/${destinationBranch}`);
 }
 
 /**
