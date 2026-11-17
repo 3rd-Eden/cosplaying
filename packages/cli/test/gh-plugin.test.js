@@ -87,7 +87,7 @@ test('a write without a model does not run gh, and a read does', () => {
 
 test('workflow and job rerun APIs pass through without content', () => {
   const context = fixture();
-  const cliRerun = run(['hook', '--model', 'Example', '--', 'gh', 'run', 'rerun', '42'], context);
+  const cliRerun = run(['hook', '--', 'gh', 'run', 'rerun', '42'], context);
   assert.equal(cliRerun.status, 0, cliRerun.stderr);
   assert.match(readFileSync(context.log, 'utf8'), /run\nrerun\n42/);
 
@@ -97,9 +97,63 @@ test('workflow and job rerun APIs pass through without content', () => {
     'repos/owner/repo/actions/jobs/7/rerun',
   ];
   for (const endpoint of endpoints) {
-    const rerun = run(['hook', '--model', 'Example', '--', 'gh', 'api', '--method', 'POST', endpoint], context);
+    const rerun = run(['hook', '--', 'gh', 'api', '--method', 'POST', endpoint], context);
     assert.equal(rerun.status, 0, rerun.stderr);
     assert.match(readFileSync(context.log, 'utf8'), new RegExp(endpoint.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+  }
+
+  const unsupported = run(['hook', '--', 'gh', 'api', 'repos/owner/repo/dispatches', '-XPOST'], context);
+  assert.equal(unsupported.status, 2);
+  assert.match(unsupported.stderr, /blocked unsupported mutating gh api request: POST/);
+
+  const comment = run(['hook', '--', 'gh', 'api', '--method', 'POST', 'repos/owner/repo/actions/runs/42/pending_deployments', '-fcomment=Deploy'], context);
+  assert.equal(comment.status, 2);
+  assert.match(comment.stderr, /COSPLAYING_MODEL|--model/);
+});
+
+test('GitHub CLI shorthand values are attributed', () => {
+  const context = fixture();
+
+  const apiComment = run(['hook', '--model', 'Example', '--', 'gh', 'api', 'repos/o/r/issues/1/comments', '-XPOST', '-fbody=hello'], context);
+  assert.equal(apiComment.status, 0, apiComment.stderr);
+  let forwarded = readFileSync(context.log, 'utf8');
+  assert.match(forwarded, /-fbody=hello/);
+  assert.match(forwarded, /<!-- cosplaying:attribution -->/);
+  assert.match(forwarded, /Authored by Example via/);
+
+  const issueEdit = run(['hook', '--model', 'Example', '--', 'gh', 'issue', 'edit', '1', '-bhello'], context);
+  assert.equal(issueEdit.status, 0, issueEdit.stderr);
+  forwarded = readFileSync(context.log, 'utf8');
+  assert.match(forwarded, /-bhello/);
+  assert.match(forwarded, /<!-- cosplaying:attribution -->/);
+  assert.match(forwarded, /Authored by Example via/);
+
+  const leadingFlagBody = run(['hook', '--model', 'Example', '--', 'gh', 'pr', 'create', '--title', 'Example', '--body', '-b begins with a flag'], context);
+  assert.equal(leadingFlagBody.status, 0, leadingFlagBody.stderr);
+  forwarded = readFileSync(context.log, 'utf8');
+  assert.equal((forwarded.match(/^--body$/gm) || []).length, 1);
+  assert.match(forwarded, /-b begins with a flag/);
+  assert.match(forwarded, /Authored by Example via/);
+});
+
+test('REST pull request merges add a trailer to explicit and default messages', () => {
+  const context = fixture();
+  const endpoint = 'repos/owner/repo/pulls/23/merge';
+  const cases = [
+    ['explicit.json', { commit_title: 'Merge change', commit_message: 'Merge details.' }],
+    ['default.json', { commit_title: 'Merge change' }],
+  ];
+
+  for (const [name, body] of cases) {
+    const input = path.join(context.cwd, name);
+    const original = `${JSON.stringify(body, null, 2)}\n`;
+    writeFileSync(input, original);
+
+    const merged = run(['hook', '--model', 'Example', '--', 'gh', 'api', '--method', 'PUT', endpoint, '--input', input], context);
+
+    assert.equal(merged.status, 0, merged.stderr);
+    assert.match(readFileSync(context.log, 'utf8'), /AI-Assisted-By: Example via cosplaying/);
+    assert.equal(readFileSync(input, 'utf8'), original);
   }
 });
 
