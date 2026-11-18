@@ -158,7 +158,7 @@ function rewriteGitArgs(inputArgs, context) {
  * @returns {string | Buffer | null} Stdout on success. Null when Git cannot be run or exits non-zero.
  */
 function captureGit(bin, args, { cwd, env, spawn, input, encoding = 'utf8' } = {}) {
-  const child = spawn(bin, args, { cwd, env, input, encoding });
+  const child = spawn(bin, args, { cwd, env, input, encoding, maxBuffer: Infinity });
   if (!child || child.error || child.status !== 0) return null;
   return child.stdout ?? (encoding === 'utf8' ? '' : Buffer.alloc(0));
 }
@@ -408,7 +408,7 @@ function outgoingCommits(bin, args, info, options) {
    * @returns {Array<{sha: string, email: string, trailer: string, subject: string}> | null} One record per commit. Null when `git log` cannot be run.
    */
   const branchCommits = (range) => {
-    const output = captureGit(bin, [...prefix, 'log', format, ...range], options);
+    const output = captureGit(bin, [...prefix, 'log', format, '--stdin'], { ...options, input: `${range.join('\n')}\n` });
     if (output === null) return null;
     return String(output).trimEnd().split(/\r?\n/).filter(Boolean).map((line) => {
       const [sha, email, trailer, subject] = line.split('\0');
@@ -491,8 +491,15 @@ function outgoingCommits(bin, args, info, options) {
     for (const target of targets) {
       const output = captureGit(bin, [...prefix, 'ls-remote', '--refs', target], options);
       if (output === null) return null;
-      const tips = String(output).trim().split(/\r?\n/).filter(Boolean).map((line) => line.split(/\s+/)[0]);
-      const knownTips = tips.filter((sha) => captureGit(bin, [...prefix, 'cat-file', '-e', `${sha}^{commit}`], options) !== null);
+      const tips = [...new Set(String(output).trim().split(/\r?\n/).filter(Boolean).map((line) => line.split(/\s+/)[0]))];
+      const objects = captureGit(bin, [...prefix, 'cat-file', '--batch-check=%(objectname) %(objecttype)'], {
+        ...options, input: tips.map((sha) => `${sha}^{commit}\n`).join(''),
+      });
+      if (objects === null) return null;
+      const knownTips = String(objects).trim().split(/\r?\n/).flatMap((line) => {
+        const [sha, type] = line.split(' ');
+        return type === 'commit' ? [sha] : [];
+      });
       const outgoing = branchCommits(knownTips.length ? [source, '--not', ...knownTips] : [source]);
       if (!outgoing) return null;
       for (const commit of outgoing) commits.set(commit.sha, commit);
