@@ -1,11 +1,10 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { systemEnv } from './spawn-stub.js';
 import { writeSamplePlugin } from './sample-plugin.js';
 
 const bin = fileURLToPath(new URL('../bin/cosplaying.js', import.meta.url));
@@ -15,7 +14,7 @@ const onWindows = process.platform === 'win32';
 /**
  * Builds the environment for a Windows hook-quoting test.
  *
- * The temporary directory is the home and the temp directory. `systemEnv` supplies `SystemRoot` when Windows needs it to start a process.
+ * The temporary directory is the home and the temp directory.
  *
  * @param {string} home Temporary directory used as home, profile, and temp.
  * @param {NodeJS.ProcessEnv} [extra={}] Values that replace the defaults, including `PATH`.
@@ -27,7 +26,8 @@ function envFor(home, extra = {}) {
     USERPROFILE: home,
     TEMP: home,
     TMP: home,
-    ...systemEnv(),
+    ...(process.env.SystemRoot ? { SystemRoot: process.env.SystemRoot } : {}),
+    ...(process.env.windir ? { windir: process.env.windir } : {}),
     ...extra,
   };
 }
@@ -138,7 +138,7 @@ test('executable lookup uses PATHEXT to find a .cmd on PATH', {
   const binDir = path.join(cwd, 'bin');
   try {
     mkdirSync(binDir);
-    writeFileSync(path.join(binDir, 'byline.cmd'), '@echo off\r\necho FOUND:%~f0\r\n');
+    writeFileSync(path.join(binDir, 'byline.cmd'), '@echo off\r\n>note.txt echo Saved note.\r\ntype note.txt\r\n');
     writeFileSync(path.join(cwd, '.cosplaying.json'), JSON.stringify({ plugins: [byline] }));
 
     const missed = run(['hook', '--', 'byline', '--list'], home, cwd, {
@@ -147,6 +147,7 @@ test('executable lookup uses PATHEXT to find a .cmd on PATH', {
     });
     assert.match(missed.stderr, /could not find the real byline executable/);
     assert.doesNotMatch(`${missed.stdout}${missed.stderr}`, /byline\.cmd/i);
+    assert.equal(existsSync(path.join(cwd, 'note.txt')), false);
 
     const found = run(['hook', '--', 'byline', '--list'], home, cwd, {
       PATH: binDir,
@@ -154,7 +155,8 @@ test('executable lookup uses PATHEXT to find a .cmd on PATH', {
     });
     const output = `${found.stdout}${found.stderr}`;
     assert.equal(found.status, 0, output);
-    assert.match(found.stdout, /^FOUND:.*[\\/]byline\.cmd\r?\n$/i);
+    assert.match(found.stdout, /^Saved note\.\r?\n$/);
+    assert.match(readFileSync(path.join(cwd, 'note.txt'), 'utf8'), /^Saved note\.\r?\n$/);
     assert.equal(found.stderr, '');
     assert.doesNotMatch(output, /could not find the real byline executable/);
   } finally {

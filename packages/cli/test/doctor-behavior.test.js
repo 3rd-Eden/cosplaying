@@ -1,18 +1,18 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdtempSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs';
+import { copyFileSync, cpSync, existsSync, linkSync, mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { systemEnv, writeSpawnStub } from './spawn-stub.js';
+import cmdShim from 'cmd-shim';
 
 const bin = fileURLToPath(new URL('../bin/cosplaying.js', import.meta.url));
 
 /**
  * Runs doctor, install, or another CLI command in a temporary home.
  *
- * `systemEnv` keeps a Windows spawn able to start. Extra environment values can change `PATH`.
+ * Extra environment values can change `PATH`.
  *
  * @param {string[]} args Arguments after the program name.
  * @param {string} home Temporary home directory.
@@ -25,7 +25,8 @@ function run(args, home, cwd, env = {}) {
     cwd,
     encoding: 'utf8',
     env: {
-      ...systemEnv(),
+      ...(process.env.SystemRoot ? { SystemRoot: process.env.SystemRoot } : {}),
+      ...(process.env.windir ? { windir: process.env.windir } : {}),
       HOME: home,
       USERPROFILE: home,
       PATH: '/usr/bin:/bin',
@@ -86,17 +87,52 @@ function commandStrings(value) {
   return commands;
 }
 
-test('doctor reports an unrecognized hook command without running it', () => {
+test('doctor reports an unrecognized hook command without running it', async (t) => {
   const { home, cwd } = isolated();
+  t.after(() => {
+    rmSync(home, { recursive: true, force: true });
+    rmSync(cwd, { recursive: true, force: true });
+  });
   const installed = run(['install', '-H', 'claude-code'], home, cwd);
   assert.equal(installed.status, 0, installed.stderr);
   const file = path.join(home, '.claude', 'settings.json');
   const parsed = JSON.parse(readFileSync(file, 'utf8'));
   const marker = path.join(home, 'ran');
-  const script = path.join(home, 'ran.sh');
-  writeFileSync(script, `#!/bin/sh\ntouch ${JSON.stringify(marker)}\n`);
-  chmodSync(script, 0o755);
-  const command = `${script} agent-hook claude-code PreToolUse # cosplaying:claude-code`;
+  const script = path.join(home, 'marker-app.mjs');
+  writeFileSync(script, `#!/usr/bin/env node\nimport { writeFileSync } from 'node:fs';\nwriteFileSync(${JSON.stringify(marker)}, 'ran');\n`);
+  const executable = path.join(home, process.platform === 'win32' ? 'unsafe-node.exe' : 'unsafe-node');
+  copyFileSync(process.execPath, executable);
+  const control = spawnSync(executable, [script], {
+    cwd, encoding: 'utf8',
+    env: {
+      HOME: home, USERPROFILE: home,
+      ...(process.env.SystemRoot ? { SystemRoot: process.env.SystemRoot } : {}),
+      ...(process.env.windir ? { windir: process.env.windir } : {}),
+    },
+  });
+  assert.equal(control.status, 0, control.stderr);
+  assert.equal(readFileSync(marker, 'utf8'), 'ran');
+  rmSync(marker);
+  linkSync(executable, path.join(home, process.platform === 'win32' ? 'node.exe' : 'node'));
+  const launcher = path.join(home, 'marker-launcher');
+  await cmdShim(script, launcher);
+  const onWindows = process.platform === 'win32';
+  const directTarget = launcher + (onWindows ? '.cmd' : '');
+  const shell = onWindows ? path.join(process.env.SystemRoot || process.env.windir, 'System32', 'cmd.exe') : '/bin/sh';
+  const launched = spawnSync(shell, onWindows ? ['/d', '/s', '/c', `""${directTarget}""`] : [launcher], {
+    cwd, encoding: 'utf8', windowsVerbatimArguments: onWindows,
+    env: {
+      HOME: home, USERPROFILE: home, PATH: '/usr/bin:/bin',
+      ...(process.env.SystemRoot ? { SystemRoot: process.env.SystemRoot } : {}),
+      ...(process.env.windir ? { windir: process.env.windir } : {}),
+    },
+  });
+  assert.equal(launched.status, 0, launched.stderr);
+  assert.equal(readFileSync(marker, 'utf8'), 'ran');
+  rmSync(marker);
+  const direct = `"${directTarget}" agent-hook claude-code PreToolUse # cosplaying:claude-code`;
+  const main = fileURLToPath(new URL('../src/main.js', import.meta.url));
+  const command = parsed.hooks.PreToolUse[0].hooks[0].command.replace(process.execPath, executable).replace(main, script);
   const assigned = `FOO=bar ${command}`;
   const visit = (value, next) => {
     if (!value || typeof value !== 'object') return;
@@ -108,13 +144,14 @@ test('doctor reports an unrecognized hook command without running it', () => {
     for (const entry of Object.values(value)) visit(entry, next);
   };
   for (const [event, entries] of Object.entries(parsed.hooks)) {
-    visit(entries, event === 'SessionStart' ? assigned : command);
+    visit(entries, event === 'SessionStart' ? assigned : event === 'PreToolUse' ? direct : command);
   }
   writeFileSync(file, `${JSON.stringify(parsed, null, 2)}\n`);
   const doctor = run(['doctor'], home, cwd);
   assert.notEqual(doctor.status, 0, doctor.stderr);
   assert.equal(existsSync(marker), false);
   assert.match(doctor.stderr, /unexpected executable/);
+  assert.equal(doctor.stderr.includes(directTarget), true, doctor.stderr);
   assert.match(doctor.stderr, /direct invocation/);
 });
 
@@ -161,20 +198,43 @@ test('a managed file missing an event is a finding', () => {
   assert.match(doctor.stderr, /missing managed SessionStart hook/);
 });
 
-test('PATH cosplaying with a different version is a finding', () => {
+test('PATH cosplaying with a different version is a finding', async (t) => {
   const { home, cwd } = isolated();
+  t.after(() => {
+    rmSync(home, { recursive: true, force: true });
+    rmSync(cwd, { recursive: true, force: true });
+  });
   const installed = run(['install'], home, cwd);
   assert.equal(installed.status, 0, installed.stderr);
+  const root = fileURLToPath(new URL('../../..', import.meta.url));
+  const secondary = path.join(home, 'secondary');
+  mkdirSync(secondary);
+  const manifest = JSON.parse(readFileSync(path.join(root, 'package.json'), 'utf8'));
+  writeFileSync(path.join(secondary, 'package.json'), JSON.stringify({ ...manifest, version: '9.9.9' }));
+  for (const directory of ['packages', 'plugins']) {
+    cpSync(path.join(root, directory), path.join(secondary, directory), { recursive: true, filter: (source) => path.basename(source) !== 'node_modules' });
+  }
+  symlinkSync(path.join(root, 'node_modules'), path.join(secondary, 'node_modules'), process.platform === 'win32' ? 'junction' : 'dir');
   const binDir = path.join(home, 'bin');
-  mkdirSync(binDir);
-  const log = path.join(home, 'path-log');
-  const shell = `#!/bin/sh\nprintf '%s\\n' "$*" >> ${JSON.stringify(log)}\nif [ "$1" = "--version" ]; then\n  printf '%s\\n' '9.9.9'\n  exit 0\nfi\nexit 0\n`;
-  writeSpawnStub(path.join(binDir, 'cosplaying'), shell, { log, version: '9.9.9' });
-  const doctor = run(['doctor'], home, cwd, { PATH: binDir });
+  const secondaryBin = path.join(secondary, 'packages', 'cli', 'bin', 'cosplaying.js');
+  await cmdShim(secondaryBin, path.join(binDir, 'cosplaying'));
+  if (process.platform === 'win32') copyFileSync(process.execPath, path.join(binDir, 'node.exe'));
+  else symlinkSync(process.execPath, path.join(binDir, 'node'));
+  const control = spawnSync(process.execPath, [secondaryBin, '--version'], {
+    cwd, encoding: 'utf8',
+    env: {
+      HOME: home, USERPROFILE: home,
+      ...(process.env.SystemRoot ? { SystemRoot: process.env.SystemRoot } : {}),
+      ...(process.env.windir ? { windir: process.env.windir } : {}),
+    },
+  });
+  assert.equal(control.status, 0, control.stderr);
+  assert.equal(control.stdout, '9.9.9\n');
+  assert.equal(control.stderr, '');
+  const searchPath = process.platform === 'win32' ? binDir : [binDir, '/usr/bin', '/bin'].join(path.delimiter);
+  const doctor = run(['doctor'], home, cwd, { PATH: searchPath });
+  assert.equal(doctor.status, 1, doctor.stderr);
   assert.match(doctor.stderr, /PATH: version 9\.9\.9 differs from 0\.1\.0/);
-  const recorded = readFileSync(log, 'utf8');
-  assert.match(recorded, /--version/);
-  assert.doesNotMatch(recorded, /--help/);
 });
 
 test('--project-dir must be a directory', () => {

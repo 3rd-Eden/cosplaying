@@ -18,7 +18,7 @@ The same mistake is a type check on an optional field, or a package this repo wr
 
 Before writing a helper, search npm. Verify the package exists and does the job. Do not invent package names. If no owned package is the same job, use a well-known dependency, or keep a few lines when an unowned dependency would change locked behavior or does a different job.
 
-Read `.cursor/skills/prefer-existing-packages/SKILL.md` before adding a helper, wrapper, or dependency. The audit below is already done. Do not redo it, and do not decline an owned package for a missing feature. Do not build a feature you cannot explain, including a feature this audit used to name.
+Read `.agents/skills/prefer-existing-packages/SKILL.md` before adding a helper, wrapper, or dependency. The audit below is already done. Do not redo it, and do not decline an owned package for a missing feature. Do not build a feature you cannot explain, including a feature this audit used to name.
 
 Business rules stay in this repo even when an owned package does the mechanism: attribution wording, harness allow/deny JSON, shell rewrite policy, plugin rules a host does not know, Article 50 limits. The mechanism (walk, quote, write, hash, template fill, error class) moves upstream. Quote moves upstream only to a package we own. `shell-quote` is not ours and would change the locked spellings.
 
@@ -68,9 +68,9 @@ Dependencies today: `collapse-white-space`, `commander`, `cosmiconfig`, `find-up
 
 ## Tests
 
-Read `.cursor/skills/integration-tests/SKILL.md` and `.cursor/skills/test-audit/SKILL.md` before writing, changing, reviewing, or sweeping tests.
+Read `.agents/skills/integration-tests/SKILL.md` and `.agents/skills/test-audit/SKILL.md` before writing, changing, reviewing, or sweeping tests.
 
-`pnpm test` runs `node --test`. Tests must use a temp home, a temp cwd, and injected env and spawn. Never touch the developer's real home or a real `gh` binary.
+`pnpm test` runs `node --test`. Tests must use a temp home, a temp cwd, and an isolated env. Never touch the developer's real home or installed `gh`. GitHub transport tests may run a pinned official `gh` release in a temporary directory against loopback services only, with test credentials and certificate trust. They must not use user credentials or call live GitHub APIs.
 
 ## Commands
 

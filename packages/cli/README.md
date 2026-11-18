@@ -42,6 +42,8 @@ The `cosplaying/config` export is `src/config.js` in this package. `loadConfig({
 
 The accepted filenames are `.cosplaying.json`, `.cosplaying.yaml`, and `.cosplaying.yml`. The user directory is `~/.config/cosplaying`. Project settings replace user settings. The `variables` objects merge; plugin arrays do not merge.
 
+`prompts.session` is the session-start instruction when a plugin changes shell commands. `prompts.empty` is the instruction when no plugin does. `attribution.templates.session` supplies the session text when `prompts.session` is absent. `attribution.templates.empty` supplies the empty text when `prompts.empty` is absent. `{harness}`, `{executable}`, `{commands}`, `{model}`, `{link}`, and `variables` are filled in both prompts.
+
 Configuration files cannot set `model` or `attribution.model`. Supply the model through command options, the environment, or the agent session.
 
 ## Related packages

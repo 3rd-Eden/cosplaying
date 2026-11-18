@@ -12,7 +12,7 @@ const gitPlugin = fileURLToPath(new URL('../../../plugins/git', import.meta.url)
 /**
  * Runs the CLI with the developer `PATH`, so a real `git` can be found when a test needs one.
  *
- * Extra environment values can point a command at a stub instead.
+ * Extra environment values can select an isolated executable.
  *
  * @param {string[]} args Arguments after the program name.
  * @param {string} home Temporary home directory.

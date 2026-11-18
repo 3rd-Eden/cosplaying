@@ -9,6 +9,7 @@ A plugin controls each command-line tool. The package includes plugins for Git (
 - [Install cosplaying](#install-cosplaying)
 - [Use plugins](#use-plugins)
 - [Set the attribution text](#set-the-attribution-text)
+- [Set the session instructions](#set-the-session-instructions)
 - [Develop a plugin](#develop-a-plugin)
 
 ## Install cosplaying
@@ -222,7 +223,33 @@ Do not put these markers in a template. The trailer renderer adds the `AI-Assist
 
 Do not set `model` or `attribution.model` in a configuration file. Supply the model for each command or agent session.
 
-You can also set `attribution.templates.session` to change the agent instructions. This template uses `{harness}`, `{commands}`, and `{executable}`. The default instructions specify ASD-STE100 Simplified Technical English and commands through cosplaying.
+## Set the session instructions
+
+The session start hook sends instructions to the coding agent. Set those instructions with `prompts` in the same configuration file.
+
+`prompts.session` is used when one or more plugins change shell commands. `prompts.empty` is used when no plugin changes shell commands. `attribution.templates.session` supplies the session text when `prompts.session` is absent. `attribution.templates.empty` supplies the empty text when `prompts.empty` is absent.
+
+This example sets both prompts:
+
+```json
+{
+  "prompts": {
+    "session": "You are running in {harness}. For {commands}, prefix the command with {executable} hook --model <current model id> --. Team: {team}. Policy: {link}.",
+    "empty": "No cosplaying plugins are installed for {harness}. Do not invent wrapped commands."
+  }
+}
+```
+
+`{harness}` is the coding agent name. `{commands}` is the plugin command list in alphabetical order. `{executable}` is the cosplaying command. `{model}` is the model name for the session. `{link}` is the policy URL. The `variables` object supplies other values, such as `{team}`.
+
+The default prompts are:
+
+| Prompt | Default text |
+| --- | --- |
+| `session` | `For authored writes with {commands}, prefix the command with {executable} hook --model <current model id> --. You are running in {harness}. When you know the model id, pass it as plain text with --model. Installed hooks pass --model-base64 for you. Write authored text in ASD-STE100 Simplified Technical English. If a command is blocked, correct the input or ask the user. Never bypass cosplaying for those commands.` |
+| `empty` | `No cosplaying plugins are installed. Do not invent wrapped commands. Write authored text in ASD-STE100 Simplified Technical English.` |
+
+A failed hook-order check appends the hook file names and the `cosplaying doctor --repair` instruction after the selected prompt.
 
 ## Develop a plugin
 

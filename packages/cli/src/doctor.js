@@ -1,10 +1,9 @@
-import { spawnSync } from 'node:child_process';
 import { existsSync, readFileSync, realpathSync } from 'node:fs';
 import path from 'node:path';
 import { CosplayError } from 'cosplaying/errors';
 import { parse } from 'unbash';
 import { readUtf8File } from 'cosplaying/hooks';
-import { resolveRealBin } from 'cosplaying/plugin';
+import { defaultSpawn, resolveRealBin } from 'cosplaying/plugin';
 import { loadPlugins } from './plugins.js';
 import { adapters, getAdapter } from 'cosplaying/adapters';
 import { gitRoot, installHarness, repairHookOrder } from './harness.js';
@@ -327,10 +326,10 @@ function collectOwned(value, owner, commands) {
  * Doctor uses it to recognize `node` and `cosplaying` without comparing the whole path first.
  *
  * @param {string} value Executable path or name from the hook command.
- * @returns {string} Final path segment with a trailing `.exe` removed.
+ * @returns {string} Final path segment with a trailing `.exe`, `.cmd`, or `.bat` removed.
  */
 function executableBase(value) {
-  return path.basename(value).replace(/\.exe$/i, '');
+  return path.basename(value).replace(/\.(?:exe|cmd|bat)$/i, '');
 }
 
 /**
@@ -503,8 +502,8 @@ function inspectCommand(command, harness, file, options, findings, probeCache, p
   let probe = probeCache.get(cacheKey);
   if (!probe) {
     const spawnOptions = { encoding: 'utf8', timeout: 15000, cwd: options.cwd, env: options.env };
-    const version = spawnSync(executable, [...args, '--version'], spawnOptions);
-    const help = spawnSync(executable, [...args, '--help'], spawnOptions);
+    const version = defaultSpawn(executable, [...args, '--version'], spawnOptions);
+    const help = defaultSpawn(executable, [...args, '--help'], spawnOptions);
     probe = { version, help };
     probeCache.set(cacheKey, probe);
   }
@@ -577,7 +576,7 @@ function checkPathVersion(options, findings) {
   if (!resolved.bin || !canProbe(resolved.bin)) return;
   let result;
   try {
-    result = spawnSync(resolved.bin, ['--version'], {
+    result = defaultSpawn(resolved.bin, ['--version'], {
       encoding: 'utf8',
       timeout: 15000,
       cwd: options.cwd,

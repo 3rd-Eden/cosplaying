@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -28,18 +28,28 @@ function isolated(t) {
   const plugin = path.join(cwd, 'byline');
   mkdirSync(plugin);
   writeFileSync(path.join(plugin, 'package.json'), JSON.stringify({ name: 'byline', version: '1.0.0', type: 'module', main: './index.js' }));
-  writeFileSync(path.join(plugin, 'index.js'), `export const description = 'Show the plugin context';
+  const application = path.join(plugin, 'save-note.mjs');
+  writeFileSync(application, "import { readFileSync, writeFileSync } from 'node:fs';\nwriteFileSync(process.argv[2], process.argv[3]);\nprocess.stdout.write(readFileSync(process.argv[2], 'utf8'));\n");
+  copyFileSync(process.execPath, path.join(plugin, process.platform === 'win32' ? 'node.exe' : 'node'));
+  writeFileSync(path.join(cwd, 'manual.txt'), 'Saved note.\n');
+  writeFileSync(path.join(plugin, 'index.js'), `import { readFileSync } from 'node:fs';
+import path from 'node:path';
+export const description = 'Save notes by model';
 export const examples = ['cosplaying hook --model "Example" -- byline'];
 export default async function run(args, context) {
-  if (args.includes('--message')) {
-    const trailer = context.attribution.renderTrailer();
-    const child = await context.spawn(process.execPath, ['-e', 'process.stdout.write(process.env.COSPLAYING_INSIDE_HOOK + "\\\\n" + process.argv[1])', trailer], {
-      cwd: context.cwd, env: context.env, stdio: 'inherit',
-    });
-    return child.status;
+  const note = path.join(context.cwd, (context.model || 'manual') + '.txt');
+  if (args.includes('--list')) {
+    context.stdout.write(readFileSync(note, 'utf8'));
+    return 0;
   }
-  context.stdout.write(JSON.stringify({ args, model: context.model }));
-  return 0;
+  const message = args.indexOf('--message');
+  if (message < 0) return 0;
+  const text = args[message + 1] + '\\n' + context.attribution.renderTrailer() + '\\n';
+  const child = await context.spawn(process.execPath, [
+    ${JSON.stringify(bin)}, 'hook', '--model', context.model, '--', 'byline',
+    ${JSON.stringify(application)}, note, text,
+  ], { cwd: context.cwd, env: context.env, stdio: 'inherit' });
+  return child.status;
 }
 `);
   const config = path.join(cwd, '.cosplaying.json');
@@ -62,7 +72,7 @@ function runCli(args, context, input) {
     cwd: context.cwd,
     input,
     encoding: 'utf8',
-    env: { HOME: context.home, USERPROFILE: context.home, PATH: '', COSPLAYING_BYLINE_BIN: path.join(context.plugin, 'index.js') },
+    env: { HOME: context.home, USERPROFILE: context.home, PATH: '', COSPLAYING_BYLINE_BIN: path.join(context.plugin, process.platform === 'win32' ? 'node.exe' : 'node') },
   });
 }
 
@@ -75,19 +85,22 @@ test('version and help show the CLI and configured plugin', (t) => {
   const help = runCli(['--help'], context);
   assert.equal(help.status, 0, help.stderr);
   assert.match(help.stdout, /Usage: cosplaying/);
-  assert.match(help.stdout, /byline {2}Show the plugin context/);
+  assert.match(help.stdout, /byline {2}Save notes by model/);
   assert.match(help.stdout, /^    cosplaying hook --model "Example" -- byline$/m);
   assert.equal(help.stderr, '');
 });
 
-test('a plugin receives hook arguments, model, and the child environment', (t) => {
+test('a plugin saves the note under its model and the child hook does not attribute it twice', (t) => {
   const context = isolated(t);
   const read = runCli(['hook', '--', 'byline', '--list'], context);
   assert.equal(read.status, 0, read.stderr);
-  assert.deepEqual(JSON.parse(read.stdout), { args: ['--list'], model: '' });
+  assert.equal(read.stdout, 'Saved note.\n');
+  assert.equal(readFileSync(path.join(context.cwd, 'manual.txt'), 'utf8'), 'Saved note.\n');
   const write = runCli(['hook', '--model', 'Example', '--', 'byline', '--message', 'text'], context);
   assert.equal(write.status, 0, write.stderr);
-  assert.equal(write.stdout, '1\nAI-Assisted-By: Example via cosplaying (https://github.com/3rd-eden/cosplaying). AI Assisted text may contain mistakes, please verify.');
+  const expected = 'text\nAI-Assisted-By: Example via cosplaying (https://github.com/3rd-eden/cosplaying). AI Assisted text may contain mistakes, please verify.\n';
+  assert.equal(write.stdout, expected);
+  assert.equal(readFileSync(path.join(context.cwd, 'Example.txt'), 'utf8'), expected);
   assert.equal(write.stderr, '');
 
   const blockedPlugin = writeSamplePlugin(path.join(context.home, 'blocked-plugin'));
@@ -170,6 +183,49 @@ test('session config fills the executable, harness label, and sorted commands', 
   assert.equal(empty.status, 0, empty.stderr);
   assert.equal(JSON.parse(empty.stdout).additional_context, 'No cosplaying plugins are installed. Do not invent wrapped commands. Write authored text in ASD-STE100 Simplified Technical English.');
 
+});
+
+test('configured session prompts replace the built-in session and empty text', (t) => {
+  const context = isolated(t);
+  writeFileSync(context.config, JSON.stringify({
+    plugins: [context.plugin],
+    link: 'https://example.com/a(b)',
+    variables: { team: 'Docs' },
+    prompts: {
+      session: '{harness}|{commands}|{team}|{link}|{model}|{executable}',
+      empty: 'NOT THE EMPTY PROMPT',
+    },
+    attribution: { templates: { session: 'OLD SESSION' } },
+  }));
+  const result = runCli(['agent-hook', 'cursor', 'sessionStart'], context, JSON.stringify({ model: 'Claude *Code*' }));
+  assert.equal(result.status, 0, result.stderr);
+  const prompt = JSON.parse(result.stdout).additional_context;
+  assert.equal(prompt.startsWith('Cursor|byline|Docs|https://example.com/a(b)|Claude *Code*|'), true);
+  assert.equal(prompt.includes(process.execPath), true);
+  assert.match(prompt, /main\.js["']$/);
+  assert.equal(prompt.includes('OLD SESSION'), false);
+  assert.equal(prompt.includes('NOT THE EMPTY PROMPT'), false);
+
+  writeFileSync(context.config, JSON.stringify({
+    plugins: [],
+    link: 'https://example.com/a(b)',
+    variables: { team: 'Docs' },
+    prompts: {
+      session: 'SHOULD NOT APPEAR',
+      empty: 'none|{harness}|{team}|{link}|{commands}',
+    },
+  }));
+  const empty = runCli(['agent-hook', 'cursor', 'sessionStart'], context, '{}');
+  assert.equal(empty.status, 0, empty.stderr);
+  assert.equal(JSON.parse(empty.stdout).additional_context, 'none|Cursor|Docs|https://example.com/a(b)|');
+
+  writeFileSync(context.config, JSON.stringify({
+    plugins: [],
+    attribution: { templates: { empty: 'from-attribution|{harness}' } },
+  }));
+  const alias = runCli(['agent-hook', 'cursor', 'sessionStart'], context, '{}');
+  assert.equal(alias.status, 0, alias.stderr);
+  assert.equal(JSON.parse(alias.stdout).additional_context, 'from-attribution|Cursor');
 });
 
 test('invalid install and doctor flags report parser errors without writes', (t) => {

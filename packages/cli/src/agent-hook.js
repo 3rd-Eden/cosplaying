@@ -192,6 +192,10 @@ export async function runAgentHook(id, eventName, context) {
       executable: cliInvocation(context.platform),
       commands: Object.keys(prepared.routes),
       template: prepared.config.session,
+      empty: prepared.config.empty,
+      model,
+      link: prepared.config.link,
+      variables: prepared.config.variables,
     });
     const problemFiles = [...repair.conflicts, ...repair.failures].map((issue) => issue.file);
     if (problemFiles.length) prompt = `${prompt}\n\n${orderWarning(problemFiles)}`;
