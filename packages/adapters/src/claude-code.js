@@ -47,10 +47,11 @@ export class ClaudeCode extends Harness {
    * @param {string} event Claude Code event name.
    * @param {NodeJS.Platform} [platform] Platform used to quote the hook command.
    * @param {string} [bin] `cosplaying` executable embedded in the command.
+   * @param {string} [entrypoint] Wrapper script used in place of `main.js`.
    * @returns {Record<string, unknown>} Hook group. `PreToolUse` includes matcher `Bash|PowerShell`.
    */
-  hookEntry(event, platform, bin) {
-    const group = super.hookEntry(event, platform, bin);
+  hookEntry(event, platform, bin, entrypoint) {
+    const group = super.hookEntry(event, platform, bin, entrypoint);
     if (event === 'PreToolUse') group.matcher = 'Bash|PowerShell';
     return group;
   }

@@ -24,6 +24,7 @@ import { cosplayingBinPath, packageVersion, realMainPath } from './paths.js';
  * @param {string} [options.projectDir] Explicit project directory. Its hooks are required.
  * @param {boolean} [options.repair] True when files that doctor can regenerate should be rewritten.
  * @param {string} [options.bin] `cosplaying` executable that regenerated hooks should embed.
+ * @param {string} [options.entrypoint] Wrapper script used in place of `main.js`.
  * @returns {Promise<number>} `0` when there are no findings. `1` when one or more findings were printed.
  */
 export async function runDoctor(options) {
@@ -43,7 +44,11 @@ export async function runDoctor(options) {
     plugins = (await loadPlugins(options)).plugins;
     for (const plugin of plugins) {
       if (plugin.descriptor.intercept === false) continue;
-      const resolved = resolveRealBin(plugin.command, { env: options.env, platform: options.platform, cliPaths: [realMainPath()] });
+      const resolved = resolveRealBin(plugin.command, {
+        env: options.env,
+        platform: options.platform,
+        cliPaths: [realMainPath(), options.entrypoint],
+      });
       if (!resolved.bin) findings.push(resolved.error || `${plugin.command} executable not found`);
     }
   } catch (error) {
@@ -83,7 +88,7 @@ export async function runDoctor(options) {
   }
 
   for (const line of info) options.stdout.write(`cosplaying doctor: ${line}\n`);
-  checkPathVersion(options, findings);
+  if (!options.entrypoint) checkPathVersion(options, findings);
   if (findings.length) {
     for (const finding of findings) options.stderr.write(`cosplaying doctor: ${finding}\n`);
     return 1;
@@ -109,7 +114,7 @@ export async function runDoctor(options) {
  * @returns {void} No value. Results are appended to `findings` or written to stdout.
  */
 function inspectExtension(file, harness, commands, required, options, findings, projectDir, managed) {
-  const expected = harness.render(commands, options.bin);
+  const expected = harness.render(commands, options.bin, options.entrypoint);
   let current;
   try {
     current = readUtf8File(file);
@@ -353,15 +358,17 @@ function sameFile(left, right) {
 /**
  * Reports whether doctor may spawn a hook executable to read `--version`.
  *
- * The probe is allowed for this install's Node script, a program named `cosplaying`, or this package's bin. Any other absolute path is not spawned.
+ * With a wrapper entrypoint, probe only that script. Otherwise allow this install's Node script, this package's bin, or a program named `cosplaying`.
  *
  * @param {string} executable First word of the hook command.
  * @param {string | undefined} script Script argument when the executable is Node. Undefined for a direct `cosplaying` command.
+ * @param {string} [entrypoint] Wrapper script expected in the hook command.
  * @returns {boolean} True when the executable is this install or a `cosplaying` basename.
  */
-function canProbe(executable, script) {
+function canProbe(executable, script, entrypoint) {
   const base = executableBase(executable);
-  if (script) return base === 'node' && sameFile(script, realMainPath());
+  if (script) return base === 'node' && sameFile(script, entrypoint || realMainPath());
+  if (entrypoint) return false;
   if (base === 'cosplaying') return true;
   return sameFile(executable, cosplayingBinPath());
 }
@@ -438,6 +445,7 @@ function inspectCommand(command, harness, file, options, findings, probeCache, p
   }
   const executable = words[0];
   const script = agent === 2 ? words[1] : undefined;
+  const entrypoint = options.bin ? undefined : options.entrypoint;
   if (agent === 2 && executableBase(executable) !== 'node') {
     findings.push(new CosplayError({
       name: 'doctor',
@@ -478,7 +486,7 @@ function inspectCommand(command, harness, file, options, findings, probeCache, p
       }).message);
       return;
     }
-    if (existsSync(script) && realpathSync(script) !== realMainPath()) {
+    if (existsSync(script) && !sameFile(script, entrypoint || realMainPath())) {
       findings.push(new CosplayError({
         name: 'doctor',
         method: 'inspectCommand',
@@ -488,7 +496,7 @@ function inspectCommand(command, harness, file, options, findings, probeCache, p
       return;
     }
   }
-  if (!canProbe(executable, script)) {
+  if (!canProbe(executable, script, entrypoint)) {
     findings.push(new CosplayError({
       name: 'doctor',
       method: 'inspectCommand',

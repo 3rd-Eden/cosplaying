@@ -44,10 +44,11 @@ export class Gemini extends Harness {
    * @param {string} event Gemini event name.
    * @param {NodeJS.Platform} [platform] Platform used to quote the hook command.
    * @param {string} [bin] `cosplaying` executable embedded in the command.
+   * @param {string} [entrypoint] Wrapper script used in place of `main.js`.
    * @returns {Record<string, unknown>} Hook group. `BeforeTool` includes matcher `run_shell_command`.
    */
-  hookEntry(event, platform, bin) {
-    const group = super.hookEntry(event, platform, bin);
+  hookEntry(event, platform, bin, entrypoint) {
+    const group = super.hookEntry(event, platform, bin, entrypoint);
     if (event === 'BeforeTool') group.matcher = 'run_shell_command';
     return group;
   }

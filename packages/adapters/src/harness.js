@@ -74,10 +74,11 @@ export class Harness {
    * @param {string} event Harness event name, for example `PreToolUse`.
    * @param {NodeJS.Platform} [platform] Platform whose quoting rules are applied to the CLI path.
    * @param {string} [bin] `cosplaying` executable to invoke. When omitted, the command uses Node and `main.js`.
+   * @param {string} [entrypoint] Wrapper script used in place of `main.js`.
    * @returns {string} One command line: the CLI invocation, `agent-hook`, the harness id, the event, and the marker.
    */
-  hookCommand(event, platform, bin) {
-    return `${cliInvocation(platform, bin)} agent-hook ${this.id} ${event} ${this.marker()}`;
+  hookCommand(event, platform, bin, entrypoint) {
+    return `${cliInvocation(platform, bin, entrypoint)} agent-hook ${this.id} ${event} ${this.marker()}`;
   }
 
   /**
@@ -88,10 +89,11 @@ export class Harness {
    * @param {string} event Harness event name.
    * @param {NodeJS.Platform} [platform] Platform passed through to {@link Harness#hookCommand}.
    * @param {string} [bin] Executable passed through to {@link Harness#hookCommand}.
+   * @param {string} [entrypoint] Wrapper script passed through to {@link Harness#hookCommand}.
    * @returns {Record<string, unknown>} Hook group `{ hooks: [{ type: 'command', command }] }`.
    */
-  hookEntry(event, platform, bin) {
-    return { hooks: [{ type: 'command', command: this.hookCommand(event, platform, bin) }] };
+  hookEntry(event, platform, bin, entrypoint) {
+    return { hooks: [{ type: 'command', command: this.hookCommand(event, platform, bin, entrypoint) }] };
   }
 
   /**
@@ -116,6 +118,7 @@ export class Harness {
    * @param {string} [options.projectDir] Project directory. When set, the file is the project hook file.
    * @param {NodeJS.Platform} [options.platform] Platform used to quote the hook command.
    * @param {string} [options.bin] `cosplaying` executable to embed in the hook command.
+   * @param {string} [options.entrypoint] Wrapper script used in place of `main.js`.
    * @param {string[]} [options.commands] Plugin commands. JSON harnesses do not embed them. Extension harnesses do.
    * @returns {string} Path of the settings file that was updated.
    */
@@ -123,7 +126,9 @@ export class Harness {
     const file = this.file(options);
     /** @type {Record<string, unknown[]>} */
     const additions = {};
-    for (const event of this.events()) additions[event] = [this.hookEntry(event, options.platform, options.bin)];
+    for (const event of this.events()) {
+      additions[event] = [this.hookEntry(event, options.platform, options.bin, options.entrypoint)];
+    }
     installJsonHooks(file, this.marker(), additions, this.jsonOptions());
     return file;
   }

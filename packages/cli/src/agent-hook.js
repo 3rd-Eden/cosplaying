@@ -69,11 +69,12 @@ function updatedToolInput(input, extracted, command) {
  *
  * @param {string} command Shell command from the tool payload.
  * @param {Record<string, string>} routes Map of plugin command name to its rewrite prefix.
+ * @param {string} executable Quoted invocation of the current CLI.
  * @returns {boolean} True when rewrite would change the command, or when the command already names this CLI.
  */
-function isWrapped(command, routes) {
+function isWrapped(command, routes, executable) {
   if (rewriteShellCommand(command, routes).changed) return true;
-  return /\b(?:cosplaying(?:\.js)?|main\.js)\b/.test(command);
+  return command.includes(executable) || /\b(?:cosplaying(?:\.js)?|main\.js)\b/.test(command);
 }
 
 /**
@@ -96,7 +97,7 @@ async function prepare(context, model) {
   const routes = {};
   for (const plugin of plugins) {
     if (plugin.descriptor.intercept === false) continue;
-    routes[plugin.command] = commandPrefix(plugin.command, model, context.platform);
+    routes[plugin.command] = commandPrefix(plugin.command, model, context.platform, context.entrypoint);
   }
   return { plugins, routes, config, model };
 }
@@ -184,12 +185,13 @@ export async function runAgentHook(id, eventName, context) {
   }
 
   const repair = repairHookOrder({ ...context, commands: Object.keys(prepared.routes) });
+  const executable = cliInvocation(context.platform, undefined, context.entrypoint);
 
   if (harness.isSessionStart(event)) {
     harness.onSessionStart(input, context);
     let prompt = renderSession({
       harness: id,
-      executable: cliInvocation(context.platform),
+      executable,
       commands: Object.keys(prepared.routes),
       template: prepared.config.session,
       empty: prepared.config.empty,
@@ -214,7 +216,7 @@ export async function runAgentHook(id, eventName, context) {
   }
 
   const problem = repair.repaired.length > 0 || repair.conflicts.length > 0 || repair.failures.length > 0;
-  if (problem && isWrapped(extracted.command, prepared.routes)) {
+  if (problem && isWrapped(extracted.command, prepared.routes, executable)) {
     const files = [...repair.repaired, ...repair.conflicts.map((issue) => issue.file), ...repair.failures.map((issue) => issue.file)];
     stdout.write(`${JSON.stringify(harness.deny(retryReason(files, repair.repaired.length > 0 && repair.conflicts.length === 0 && repair.failures.length === 0)))}\n`);
     return 0;

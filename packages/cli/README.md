@@ -20,7 +20,9 @@ Quoted strings, `bash -c` and `eval` arguments, and script files named with `sou
 
 Exported from `src/index.js`:
 
-- `main(argv, options)` parses argv with commander and returns an exit code. `options` may set `stdout`, `stderr`, `env`, `cwd`, `home`, `platform`, and `stdin`. No argv writes help and returns `2`. `--help` and `-h` return `0`. `--version` and `-v` return `0`.
+- `cosplaying(options, argv)` parses CLI arguments and returns a promise for the exit code. Both arguments are optional. When you omit `argv`, it reads the command-line arguments for the current process. An empty argument list writes help and returns `2`. Help and version flags return `0`.
+- Set `options.defaults` to a settings object in the same format as `.cosplaying.json`. User and project files take precedence. Set `options.entrypoint` to the wrapper script path or its file URL, such as `import.meta.url`. Generated commands run that script with Node.
+- Runtime options include `stdout`, `stderr`, `env`, `cwd`, `home`, `platform`, and `stdin`. The original `main(argv, options)` export also accepts these options.
 
   Usage and model-flag errors return `2`. A missing plugin, a missing binary, a failed plugin install, uninstall, enable, or disable, and a thrown error return `1`. `hook` returns the plugin `run` value, or `0` when that value is missing. When `COSPLAYING_INSIDE_HOOK` is `1`, `hook` returns the spawn status, or `1` when that status is missing. `plugin enable <name>` and `plugin disable <name>` edit the user configuration for the included plugins `git` and `gh`.
 

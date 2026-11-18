@@ -62,17 +62,26 @@ export function cosplayingBinPath() {
 }
 
 /**
- * Builds the quoted command that starts this CLI.
+ * Gets the executable and arguments that start this CLI.
  *
- * Installed hooks and the session prompt use this text. A supplied executable replaces the Node-plus-script form.
+ * @param {string} [bin] Executable that replaces the Node and script invocation.
+ * @param {string} [entrypoint] Wrapper script used in place of `main.js`.
+ * @returns {string[]} Executable followed by its arguments.
+ */
+export function cliCommand(bin, entrypoint) {
+  return bin ? [bin] : [process.execPath, entrypoint || realMainPath()];
+}
+
+/**
+ * Builds the quoted command that starts this CLI.
  *
  * @param {NodeJS.Platform} [platform=process.platform] Platform whose quoting rules are applied.
  * @param {string} [bin] Absolute path of a `cosplaying` executable. When this is set, the result is that path alone.
- * @returns {string} Quoted invocation. `bin` when it is set. Otherwise the quoted Node executable and the quoted `main.js` path.
+ * @param {string} [entrypoint] Wrapper script used in place of `main.js`.
+ * @returns {string} Quoted invocation.
  */
-export function cliInvocation(platform = process.platform, bin) {
-  if (bin) return quoteShell(bin, platform);
-  return `${quoteShell(process.execPath, platform)} ${quoteShell(realMainPath(), platform)}`;
+export function cliInvocation(platform = process.platform, bin, entrypoint) {
+  return cliCommand(bin, entrypoint).map((word) => quoteShell(word, platform)).join(' ');
 }
 
 /**
@@ -83,9 +92,10 @@ export function cliInvocation(platform = process.platform, bin) {
  * @param {string} command Plugin command name, for example `git`.
  * @param {string} model Model name for this rewrite. An empty string omits `--model-base64`.
  * @param {NodeJS.Platform} [platform=process.platform] Platform whose quoting rules are applied to the CLI invocation.
+ * @param {string} [entrypoint] Wrapper script used in place of `main.js`.
  * @returns {string} Shell text of the form `<cli> hook [--model-base64 <value>] -- <command>`.
  */
-export function commandPrefix(command, model, platform = process.platform) {
+export function commandPrefix(command, model, platform = process.platform, entrypoint) {
   const encoded = model ? ` --model-base64 ${Buffer.from(model, 'utf8').toString('base64url')}` : '';
-  return `${cliInvocation(platform)} hook${encoded} -- ${command}`;
+  return `${cliInvocation(platform, undefined, entrypoint)} hook${encoded} -- ${command}`;
 }

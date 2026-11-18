@@ -122,12 +122,13 @@ export class ExtensionHarness extends Harness {
    * @param {string} [options.projectDir] Project directory. When set, the extension is written inside the project.
    * @param {string[]} [options.commands] Plugin command names embedded in the extension.
    * @param {string} [options.bin] `cosplaying` executable embedded in the extension. When omitted, the script uses Node and `main.js`.
+   * @param {string} [options.entrypoint] Wrapper script used in place of `main.js`.
    * @returns {string} Path of the extension file.
    * @throws {CosplayError} The destination exists, has no ownership marker, and is not already the generated source.
    */
   install(options) {
     const file = this.file(options);
-    installHookFile(file, this.marker(), this.render(options.commands || [], options.bin));
+    installHookFile(file, this.marker(), this.render(options.commands || [], options.bin, options.entrypoint));
     return file;
   }
 
@@ -155,9 +156,10 @@ export class ExtensionHarness extends Harness {
    *
    * @param {string[]} _commands Plugin command names the script must treat as wrapped commands.
    * @param {string} [_bin] `cosplaying` executable the script should spawn. When omitted, the script uses Node and `main.js`.
+   * @param {string} [_entrypoint] Wrapper script used in place of `main.js`.
    * @returns {string} Extension source. The base method returns `undefined`.
    */
-  render(_commands, _bin) {}
+  render(_commands, _bin, _entrypoint) {}
 
   /**
    * Returns the event name used when `agent-hook` is called for this harness without one.
