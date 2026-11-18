@@ -14,7 +14,7 @@ import which from 'which';
 import { Server as ProxyServer, RequestError } from 'proxy-chain';
 
 const bin = fileURLToPath(new URL('../bin/cosplaying.js', import.meta.url));
-const block = '<!-- cosplaying:attribution -->\nAuthored by Example via [cosplaying](https://github.com/3rd-eden/cosplaying). AI Assisted text may contain mistakes, please verify.\n<!-- /cosplaying:attribution -->\n';
+const block = '<!-- cosplaying:attribution -->\n> 🤖 Authored by Example via [cosplaying](https://github.com/3rd-eden/cosplaying). AI Assisted text may contain mistakes, please verify.\n<!-- /cosplaying:attribution -->\n';
 const trailer = 'AI-Assisted-By: Example via cosplaying (https://github.com/3rd-eden/cosplaying). AI Assisted text may contain mistakes, please verify.';
 let runtime;
 let tools;

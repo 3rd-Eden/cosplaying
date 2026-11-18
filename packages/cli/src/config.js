@@ -7,7 +7,7 @@ import path from 'node:path';
 export const DEFAULT_LINK = 'https://github.com/3rd-eden/cosplaying';
 
 /** @type {string} */
-export const DEFAULT_MARKDOWN = 'Authored by {model} via [cosplaying]({link}). AI Assisted text may contain mistakes, please verify.';
+export const DEFAULT_MARKDOWN = '> 🤖 Authored by {model} via [cosplaying]({link}). AI Assisted text may contain mistakes, please verify.';
 
 /** @type {string} */
 export const DEFAULT_TRAILER = '{model} via cosplaying ({link}). AI Assisted text may contain mistakes, please verify.';

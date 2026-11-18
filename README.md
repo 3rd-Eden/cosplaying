@@ -209,7 +209,7 @@ The default link is `https://github.com/3rd-eden/cosplaying`. The default templa
 
 | Template | Default text |
 | --- | --- |
-| `markdown` | `Authored by {model} via [cosplaying]({link}). AI Assisted text may contain mistakes, please verify.` |
+| `markdown` | `> 🤖 Authored by {model} via [cosplaying]({link}). AI Assisted text may contain mistakes, please verify.` |
 | `trailer` | `{model} via cosplaying ({link}). AI Assisted text may contain mistakes, please verify.` |
 
 The Markdown renderer adds these markers around the byline:
