@@ -7,7 +7,7 @@ import path from 'node:path';
 export const DEFAULT_LINK = 'https://github.com/3rd-eden/cosplaying';
 
 /** @type {string} */
-export const DEFAULT_MARKDOWN = 'Authored by {model} via [cosplaying]({link}). AI Assisted text may contain mistakes, please verify.';
+export const DEFAULT_MARKDOWN = '> 🤖 Authored by {model} via [cosplaying]({link}). AI Assisted text may contain mistakes, please verify.';
 
 /** @type {string} */
 export const DEFAULT_TRAILER = '{model} via cosplaying ({link}). AI Assisted text may contain mistakes, please verify.';
@@ -53,20 +53,22 @@ function merge(base, overlay) {
 /**
  * Maps the public settings names onto the flat fields the CLI reads.
  *
- * The file may use `attribution.link` and `attribution.templates`. Older files may use `link` and `attribution.template`. Fields that are absent stay absent so the defaults remain.
+ * The file may use `prompts.session` and `prompts.empty` for the text a harness shows at session start. `attribution.templates.session` and `attribution.templates.empty` supply the same fields when the `prompts` key is absent. The file may also use `attribution.link` and `attribution.templates`. Older files may use `link` and `attribution.template`. Fields that are absent stay absent so the defaults remain.
  *
  * @param {unknown} config Parsed settings object. A missing value is treated as an empty object.
- * @returns {Record<string, unknown>} Flat settings. Keys are `link`, `markdown`, `trailer`, `session`, `plugins`, and `variables`, and only keys that were set are present.
+ * @returns {Record<string, unknown>} Flat settings. Keys are `link`, `markdown`, `trailer`, `session`, `empty`, `plugins`, and `variables`, and only keys that were set are present.
  */
 function normalize(config) {
   const file = config ?? {};
   const attribution = file.attribution ?? {};
   const templates = attribution.templates ?? {};
+  const prompts = file.prompts ?? {};
   return Object.fromEntries(Object.entries({
     link: attribution.link ?? file.link,
     markdown: templates.markdown ?? attribution.template,
     trailer: templates.trailer,
-    session: templates.session,
+    session: prompts.session ?? templates.session,
+    empty: prompts.empty ?? templates.empty,
     plugins: file.plugins,
     variables: file.variables,
   }).filter(([, value]) => value !== undefined));
@@ -178,14 +180,14 @@ export function userConfigDirectory({ home = homedir() } = {}) {
 }
 
 /**
- * Loads the settings that attribution and plugin selection use.
+ * Loads the settings that attribution, session prompts, and plugin selection use.
  *
  * Defaults are applied first, then the user file, then the project file. A project value replaces a user value. `variables` are merged by key.
  *
  * @param {object} [options]
  * @param {string} [options.cwd=process.cwd()] Directory where the project search starts.
  * @param {string} [options.home=homedir()] Home directory used to find the user file.
- * @returns {{markdown: string, trailer: string, link: string, plugins: string[], variables: Record<string, string>, session?: string}} Effective settings. `session` is present only when a file sets it.
+ * @returns {{markdown: string, trailer: string, link: string, plugins: string[], variables: Record<string, string>, session?: string, empty?: string}} Effective settings. `session` and `empty` are present only when a file sets them.
  * @throws {CosplayError} A settings file cannot be parsed, or a file sets the model.
  */
 export function loadConfig({ cwd = process.cwd(), home = homedir() } = {}) {

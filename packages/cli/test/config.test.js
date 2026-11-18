@@ -43,7 +43,7 @@ test('hook renders defaults and selected JSON or YAML settings with user and pro
     const rows = [
       {
         name: 'defaults',
-        markdown: 'Authored by Example via [cosplaying](https://github.com/3rd-eden/cosplaying). AI Assisted text may contain mistakes, please verify.',
+        markdown: '> 🤖 Authored by Example via [cosplaying](https://github.com/3rd-eden/cosplaying). AI Assisted text may contain mistakes, please verify.',
         trailer: 'AI-Assisted-By: Example via cosplaying (https://github.com/3rd-eden/cosplaying). AI Assisted text may contain mistakes, please verify.',
       },
       {
@@ -57,20 +57,20 @@ test('hook renders defaults and selected JSON or YAML settings with user and pro
         name: 'trailer variables',
         user: { variables: { team: 'user', owner: 'kept' }, attribution: { templates: { trailer: '{model} {team} {owner}' } } },
         project: { variables: { team: 'project' } },
-        markdown: 'Authored by Example via [cosplaying](https://github.com/3rd-eden/cosplaying). AI Assisted text may contain mistakes, please verify.',
+        markdown: '> 🤖 Authored by Example via [cosplaying](https://github.com/3rd-eden/cosplaying). AI Assisted text may contain mistakes, please verify.',
         trailer: 'AI-Assisted-By: Example project kept',
       },
       {
         name: 'YAML',
         yaml: 'link: https://example.com/yaml\n',
-        markdown: 'Authored by Example via [cosplaying](https://example.com/yaml). AI Assisted text may contain mistakes, please verify.',
+        markdown: '> 🤖 Authored by Example via [cosplaying](https://example.com/yaml). AI Assisted text may contain mistakes, please verify.',
         trailer: 'AI-Assisted-By: Example via cosplaying (https://example.com/yaml). AI Assisted text may contain mistakes, please verify.',
       },
       {
         name: 'first configured file',
         project: { link: 'https://example.com/json' },
         yaml: 'link: https://example.com/ignored\n',
-        markdown: 'Authored by Example via [cosplaying](https://example.com/json). AI Assisted text may contain mistakes, please verify.',
+        markdown: '> 🤖 Authored by Example via [cosplaying](https://example.com/json). AI Assisted text may contain mistakes, please verify.',
         trailer: 'AI-Assisted-By: Example via cosplaying (https://example.com/json). AI Assisted text may contain mistakes, please verify.',
       },
     ];

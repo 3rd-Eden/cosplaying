@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import {
+  copyFileSync,
   existsSync,
   mkdtempSync,
   mkdirSync,
@@ -12,18 +13,29 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import test from 'node:test';
+import test, { after } from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { systemEnv, writeSpawnStub } from './spawn-stub.js';
 import { writeSamplePlugin } from './sample-plugin.js';
 
 const bin = fileURLToPath(new URL('../bin/cosplaying.js', import.meta.url));
 const byline = writeSamplePlugin(mkdtempSync(path.join(tmpdir(), 'cosplaying-byline-')));
+const nodeExecutable = path.join(byline, process.platform === 'win32' ? 'node.exe' : 'node');
+copyFileSync(process.execPath, nodeExecutable);
+const application = path.join(byline, 'note.mjs');
+writeFileSync(application, String.raw`
+import { readFileSync, writeFileSync } from 'node:fs';
+const args = process.argv.slice(2);
+const message = args.indexOf('--message');
+if (message >= 0) writeFileSync('note.txt', args[message + 1] + '\n');
+process.stdout.write(readFileSync('note.txt', 'utf8'));
+`);
+const bylineEnv = { COSPLAYING_BYLINE_BIN: nodeExecutable };
+after(() => rmSync(byline, { recursive: true, force: true }));
 
 /**
  * Runs the CLI in a temporary home, with optional stdin.
  *
- * `systemEnv` keeps a Windows spawn able to start. Extra environment values can point a command at a stub.
+ * Extra environment values select real executables or set the model for a run.
  *
  * @param {string[]} args Arguments after the program name.
  * @param {string} home Temporary home directory.
@@ -38,7 +50,8 @@ function run(args, home, cwd, env = {}, input) {
     input,
     encoding: 'utf8',
     env: {
-      ...systemEnv(),
+      ...(process.env.SystemRoot ? { SystemRoot: process.env.SystemRoot } : {}),
+      ...(process.env.windir ? { windir: process.env.windir } : {}),
       HOME: home,
       USERPROFILE: home,
       PATH: '/usr/bin:/bin',
@@ -49,89 +62,66 @@ function run(args, home, cwd, env = {}, input) {
 }
 
 /**
- * Creates a temporary home, a working directory, and a byline executable that records each spawn.
- *
- * A plugin list is written to the project settings. Pass a false value to leave that file unwritten.
- *
- * @param {string[] | false} [plugins=[byline]] Plugin paths stored in `.cosplaying.json`. A false value skips the file.
- * @returns {{home: string, cwd: string, marker: string, stub: string}} The home, the working directory, the file the stub touches, and the stub executable.
+ * @param {string[] | false} [plugins=[byline]]
+ * @returns {{home: string, cwd: string, note: string}}
  */
 function isolated(plugins = [byline]) {
   const home = mkdtempSync(path.join(tmpdir(), 'cosplaying-gap-home-'));
   const cwd = mkdtempSync(path.join(tmpdir(), 'cosplaying-gap-cwd-'));
-  const marker = path.join(home, 'spawned');
-  const stub = writeSpawnStub(
-    path.join(home, 'byline'),
-    `#!/bin/sh\ntouch ${JSON.stringify(marker)}\nprintf '%s\\n' "$@"\n`,
-    { marker },
-  );
+  const note = path.join(cwd, 'note.txt');
+  writeFileSync(note, 'Saved note.\n');
   if (plugins) writeFileSync(path.join(cwd, '.cosplaying.json'), JSON.stringify({ plugins }));
-  return { home, cwd, marker, stub };
-}
-
-/**
- * Returns the environment override that points `byline` at the isolated stub.
- *
- * @param {{stub: string}} context Fixture from {@link isolated}. `stub` is the executable path.
- * @returns {{COSPLAYING_BYLINE_BIN: string}} Environment fragment to merge into a CLI run.
- */
-function envFor(context) {
-  return { COSPLAYING_BYLINE_BIN: context.stub };
+  return { home, cwd, note };
 }
 
 test('hook resolves the model, rejects a bad flag, and skips a second attribution', () => {
-  const context = isolated();
-  const { home, cwd, marker } = context;
-  const env = envFor(context);
+  const { home, cwd, note } = isolated();
   try {
-    const read = run(['hook', '--', 'byline', '--list'], home, cwd, env);
+    const read = run(['hook', '--', 'byline', application, '--list'], home, cwd, bylineEnv);
     assert.equal(read.status, 0, read.stderr);
-    assert.equal(read.stdout, '--list\n');
-    assert.equal(existsSync(marker), true);
-    assert.doesNotMatch(read.stdout, /AI-Assisted-By/);
+    assert.equal(read.stdout, 'Saved note.\n');
+    assert.equal(readFileSync(note, 'utf8'), 'Saved note.\n');
 
-    const collapsed = run(['hook', '--model', '  Example   Model  ', '--', 'byline', '--message', 'hi'], home, cwd, env);
-    assert.equal(collapsed.status, 0, collapsed.stderr);
-    assert.match(collapsed.stdout, /AI-Assisted-By: Example Model via cosplaying /);
-    assert.doesNotMatch(collapsed.stdout, /Example   Model/);
+    const rows = [
+      { flags: ['--model', '  Example   Model  '], model: 'Example Model' },
+      { flags: ['--harness', 'gemini'], model: 'Gemini CLI' },
+      { flags: [], env: { COSPLAYING_MODEL: 'Env Model' }, model: 'Env Model' },
+      { flags: ['--model', 'Plain'], env: { COSPLAYING_MODEL: 'Env Model' }, model: 'Plain' },
+      { flags: ['--model-base64', 'RnJvbTY0', '--model', 'Plain'], model: 'From64' },
+    ];
+    for (const row of rows) {
+      const written = run(['hook', ...row.flags, '--', 'byline', application, '--message', 'hi'], home, cwd, {
+        ...bylineEnv, ...row.env,
+      });
+      assert.equal(written.status, 0, written.stderr);
+      const expected = `hi\nAI-Assisted-By: ${row.model} via cosplaying (https://github.com/3rd-eden/cosplaying). AI Assisted text may contain mistakes, please verify.\n`;
+      assert.equal(readFileSync(note, 'utf8'), expected);
+      assert.equal(written.stdout, expected);
+      assert.equal(written.stderr, '');
+    }
 
-    const labeled = run(['hook', '--harness', 'gemini', '--', 'byline', '--message', 'hi'], home, cwd, env);
-    assert.equal(labeled.status, 0, labeled.stderr);
-    assert.match(labeled.stdout, /AI-Assisted-By: Gemini CLI via cosplaying /);
+    for (const value of ['', '-bad']) {
+      rmSync(note);
+      const rejected = run(['hook', '--model', value, '--', 'byline', application, '--message', 'hi'], home, cwd, bylineEnv);
+      assert.equal(rejected.status, 2);
+      assert.equal(rejected.stdout, '');
+      assert.match(rejected.stderr, /--model/);
+      assert.equal(existsSync(note), false);
+      writeFileSync(note, 'Saved note.\n');
+    }
 
-    const fromEnv = run(['hook', '--', 'byline', '--message', 'hi'], home, cwd, { ...env, COSPLAYING_MODEL: 'Env Model' });
-    assert.equal(fromEnv.status, 0, fromEnv.stderr);
-    assert.match(fromEnv.stdout, /AI-Assisted-By: Env Model via cosplaying /);
-
-    const plain = run(['hook', '--model', 'Plain', '--', 'byline', '--message', 'hi'], home, cwd, { ...env, COSPLAYING_MODEL: 'Env Model' });
-    assert.match(plain.stdout, /AI-Assisted-By: Plain via cosplaying /);
-
-    const encoded = Buffer.from('From64', 'utf8').toString('base64url');
-    const decoded = run(['hook', '--model-base64', encoded, '--model', 'Plain', '--', 'byline', '--message', 'hi'], home, cwd, env);
-    assert.equal(decoded.status, 0, decoded.stderr);
-    assert.match(decoded.stdout, /AI-Assisted-By: From64 via cosplaying /);
-    assert.doesNotMatch(decoded.stdout, /Plain/);
-
-    rmSync(marker, { force: true });
-    const empty = run(['hook', '--model', '', '--', 'byline', '--message', 'hi'], home, cwd, env);
-    assert.equal(empty.status, 2);
-    assert.equal(empty.stdout, '');
-    assert.equal(existsSync(marker), false);
-    assert.match(empty.stderr, /--model/);
-
-    const dashed = run(['hook', '--model', '-bad', '--', 'byline', '--list'], home, cwd, env);
-    assert.equal(dashed.status, 2);
-    assert.equal(existsSync(marker), false);
-
-    const again = run(['hook', '--model', 'Example', '--', 'byline', '--message', 'hi'], home, cwd, { ...env, COSPLAYING_INSIDE_HOOK: '1' });
+    const again = run(['hook', '--model', 'Example', '--', 'byline', application, '--message', 'hi'], home, cwd, {
+      ...bylineEnv, COSPLAYING_INSIDE_HOOK: '1',
+    });
     assert.equal(again.status, 0, again.stderr);
-    assert.equal(again.stdout, '--message\nhi\n');
-    assert.doesNotMatch(again.stdout, /AI-Assisted-By/);
+    assert.equal(again.stdout, 'hi\n');
+    assert.equal(readFileSync(note, 'utf8'), 'hi\n');
 
-    const missing = run(['hook', '--model', 'Example', '--', 'byline', '--list'], home, cwd, {});
+    const missing = run(['hook', '--model', 'Example', '--', 'byline', application, '--list'], home, cwd, { PATH: '' });
     assert.equal(missing.status, 1);
     assert.match(missing.stderr, /byline/);
     assert.match(missing.stderr, /PATH/);
+    assert.equal(readFileSync(note, 'utf8'), 'hi\n');
   } finally {
     rmSync(home, { recursive: true, force: true });
     rmSync(cwd, { recursive: true, force: true });
@@ -162,7 +152,7 @@ test('rewrite reports missing text and keeps the spacing of one --shell argument
 test('agent-hook is silent for non-shell tools and prints the harness allow or session payload', () => {
   const context = isolated();
   const { home, cwd } = context;
-  const env = envFor(context);
+  const env = bylineEnv;
   try {
     const claude = run(['agent-hook', 'claude-code', 'PreToolUse'], home, cwd, env, JSON.stringify({
       tool_name: 'Bash',
@@ -260,7 +250,7 @@ test('agent-hook is silent for non-shell tools and prints the harness allow or s
 test('agent-hook uses model_id and toolInput, and rejects a non-object payload', () => {
   const context = isolated();
   const { home, cwd } = context;
-  const env = envFor(context);
+  const env = bylineEnv;
   try {
     const direct = run(['agent-hook', 'cursor', 'preToolUse'], home, cwd, env, JSON.stringify({
       model: 'Direct',
@@ -418,13 +408,13 @@ test('a cursor pre-tool event repairs an rtk hook that was appended to the Claud
   const context = isolated();
   const { home, cwd } = context;
   try {
-    const installed = run(['install', '--harness', 'claude-code,cursor'], home, cwd, envFor(context));
+    const installed = run(['install', '--harness', 'claude-code,cursor'], home, cwd, bylineEnv);
     assert.equal(installed.status, 0, installed.stderr);
     const file = path.join(home, '.claude', 'settings.json');
     const parsed = JSON.parse(readFileSync(file, 'utf8'));
     parsed.hooks.PreToolUse.push({ hooks: [{ type: 'command', command: 'rtk hook claude' }] });
     writeFileSync(file, `${JSON.stringify(parsed, null, 2)}\n`);
-    const result = run(['agent-hook', 'cursor', 'preToolUse'], home, cwd, envFor(context), JSON.stringify({
+    const result = run(['agent-hook', 'cursor', 'preToolUse'], home, cwd, bylineEnv, JSON.stringify({
       tool_name: 'Shell',
       tool_input: { command: 'byline --list' },
     }));
@@ -445,7 +435,6 @@ test('intercept false stays out of the rewrite, a duplicate command fails, and a
   const context = isolated();
   const { home, cwd } = context;
   const quietDir = path.join(cwd, 'quiet');
-  const quietStub = path.join(home, 'quiet');
   mkdirSync(quietDir);
   writeFileSync(path.join(quietDir, 'package.json'), JSON.stringify({
     name: 'quiet',
@@ -461,24 +450,24 @@ export default async function run(args, context) {
   return result?.status ?? 1;
 }
 `);
-  const quietProgram = writeSpawnStub(quietStub, '#!/bin/sh\nprintf "quiet:%s\\n" "$@"\n', { prefix: 'quiet:' });
   writeFileSync(path.join(cwd, '.cosplaying.json'), JSON.stringify({ plugins: [byline, quietDir] }));
   try {
     const rewritten = run(['rewrite', 'quiet --list; byline --list'], home, cwd, {
-      ...envFor(context),
-      COSPLAYING_QUIET_BIN: quietProgram,
+      ...bylineEnv,
+      COSPLAYING_QUIET_BIN: nodeExecutable,
     });
     assert.equal(rewritten.status, 0, rewritten.stderr);
     assert.match(rewritten.stdout, /^quiet --list; /);
     assert.match(rewritten.stdout, /hook -- byline --list\n$/);
     assert.doesNotMatch(rewritten.stdout, /hook -- quiet/);
 
-    const ran = run(['hook', '--', 'quiet', '--list'], home, cwd, {
-      ...envFor(context),
-      COSPLAYING_QUIET_BIN: quietProgram,
+    const ran = run(['hook', '--', 'quiet', application, '--message', 'A quiet note.'], home, cwd, {
+      ...bylineEnv,
+      COSPLAYING_QUIET_BIN: nodeExecutable,
     });
     assert.equal(ran.status, 0, ran.stderr);
-    assert.equal(ran.stdout, 'quiet:--list\n');
+    assert.equal(ran.stdout, 'A quiet note.\n');
+    assert.equal(readFileSync(context.note, 'utf8'), 'A quiet note.\n');
 
     const left = path.join(cwd, 'dup-a');
     const right = path.join(cwd, 'dup-b');
@@ -509,11 +498,15 @@ export default async function run(args, context) {
     }));
     writeFileSync(path.join(broken, 'index.js'), 'export default =\n');
     writeFileSync(path.join(cwd, '.cosplaying.json'), JSON.stringify({ plugins: [broken] }));
-    const imported = run(['hook', '--model', 'Example', '--', 'broken', '--list'], home, cwd, envFor(context));
+    rmSync(context.note);
+    const imported = run(['hook', '--model', 'Example', '--', 'broken', application, '--message', 'Do not write.'], home, cwd, {
+      COSPLAYING_BROKEN_BIN: nodeExecutable,
+    });
     assert.equal(imported.status, 1);
     assert.equal(imported.stdout, '');
     assert.match(imported.stderr, /could not import plugin/);
     assert.match(imported.stderr, /index\.js/);
+    assert.equal(existsSync(context.note), false);
   } finally {
     rmSync(home, { recursive: true, force: true });
     rmSync(cwd, { recursive: true, force: true });
@@ -523,7 +516,7 @@ export default async function run(args, context) {
 test('session start stores a hashed model file and the project trailer stays', () => {
   const context = isolated();
   const { home, cwd } = context;
-  const env = envFor(context);
+  const env = bylineEnv;
   try {
     const sessionId = 'abc/../x';
     const started = run(['agent-hook', 'claude-code', 'SessionStart'], home, cwd, env, JSON.stringify({
@@ -551,16 +544,20 @@ test('session start stores a hashed model file and the project trailer stays', (
       variables: { team: 'Docs' },
       attribution: { templates: { trailer: '{model} {team} file' } },
     }));
-    const fromFile = run(['hook', '--model', 'Example', '--', 'byline', '--message', 'hi'], home, cwd, env);
-    assert.match(fromFile.stdout, /AI-Assisted-By: Example Docs file\n/);
-    const fromEnv = run(['hook', '--model', 'Example', '--', 'byline', '--message', 'hi'], home, cwd, {
+    const fromFile = run(['hook', '--model', 'Example', '--', 'byline', application, '--message', 'hi'], home, cwd, env);
+    assert.equal(fromFile.status, 0, fromFile.stderr);
+    assert.equal(fromFile.stdout, 'hi\nAI-Assisted-By: Example Docs file\n');
+    assert.equal(readFileSync(context.note, 'utf8'), 'hi\nAI-Assisted-By: Example Docs file\n');
+    const fromEnv = run(['hook', '--model', 'Example', '--', 'byline', application, '--message', 'hi'], home, cwd, {
       ...env,
       COSPLAYING_ATTRIBUTION_TEMPLATE: 'env {model}',
       COSPLAYING_ATTRIBUTION_TEMPLATE_MARKDOWN: 'env markdown {model}',
       COSPLAYING_ATTRIBUTION_TEMPLATE_TRAILER: '{model} only',
       COSPLAYING_LINK: 'https://example.com/env',
     });
-    assert.match(fromEnv.stdout, /AI-Assisted-By: Example Docs file\n/);
+    assert.equal(fromEnv.status, 0, fromEnv.stderr);
+    assert.equal(fromEnv.stdout, 'hi\nAI-Assisted-By: Example Docs file\n');
+    assert.equal(readFileSync(context.note, 'utf8'), 'hi\nAI-Assisted-By: Example Docs file\n');
   } finally {
     rmSync(home, { recursive: true, force: true });
     rmSync(cwd, { recursive: true, force: true });
@@ -570,7 +567,7 @@ test('session start stores a hashed model file and the project trailer stays', (
 test('Pi and OpenCode extensions rewrite a command, and install follows their directories', () => {
   const context = isolated();
   const { home, cwd } = context;
-  const env = envFor(context);
+  const env = bylineEnv;
   try {
     const installed = run(['install', '--harness', 'pi,opencode'], home, cwd, env);
     assert.equal(installed.status, 0, installed.stderr);
@@ -581,7 +578,8 @@ test('Pi and OpenCode extensions rewrite a command, and install follows their di
       cwd,
       encoding: 'utf8',
       env: {
-        ...systemEnv(),
+        ...(process.env.SystemRoot ? { SystemRoot: process.env.SystemRoot } : {}),
+        ...(process.env.windir ? { windir: process.env.windir } : {}),
         HOME: home,
         USERPROFILE: home,
         PATH: '/usr/bin:/bin',
@@ -620,7 +618,7 @@ test('Pi and OpenCode extensions rewrite a command, and install follows their di
       const refreshed = spawnSync(process.execPath, [script, piFile, openFile, text, 'Shell'], {
         cwd,
         encoding: 'utf8',
-        env: { ...systemEnv(), HOME: home, USERPROFILE: home, PATH: '/usr/bin:/bin' },
+        env: { ...(process.env.SystemRoot ? { SystemRoot: process.env.SystemRoot } : {}), ...(process.env.windir ? { windir: process.env.windir } : {}), HOME: home, USERPROFILE: home, PATH: '/usr/bin:/bin' },
       });
       assert.equal(refreshed.status, 0, refreshed.stderr);
       const guarded = JSON.parse(refreshed.stdout);
@@ -637,7 +635,7 @@ test('Pi and OpenCode extensions rewrite a command, and install follows their di
     const failed = spawnSync(process.execPath, [script, piFile, openFile, 'sudo -u root byline --list', 'Shell'], {
       cwd,
       encoding: 'utf8',
-      env: { ...systemEnv(), HOME: home, USERPROFILE: home, PATH: '/usr/bin:/bin' },
+      env: { ...(process.env.SystemRoot ? { SystemRoot: process.env.SystemRoot } : {}), ...(process.env.windir ? { windir: process.env.windir } : {}), HOME: home, USERPROFILE: home, PATH: '/usr/bin:/bin' },
     });
     assert.equal(failed.status, 0, failed.stderr);
     const denied = JSON.parse(failed.stdout);

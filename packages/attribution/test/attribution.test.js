@@ -51,7 +51,7 @@ test('hook renders markdown and trailers and rejects invalid attribution', () =>
     })}\n`);
     const program = path.join(pluginDir, 'index.js');
     const body = path.join(cwd, 'body.md');
-    const rendered = 'Authored by Claude \\*Code\\* via [cosplaying](https://example.com/a%28b%29). AI Assisted text may contain mistakes, please verify.';
+    const rendered = '> 🤖 Authored by Claude \\*Code\\* via [cosplaying](https://example.com/a%28b%29). AI Assisted text may contain mistakes, please verify.';
     const block = `<!-- cosplaying:attribution -->\n${rendered}\n<!-- /cosplaying:attribution -->\n`;
 
     /**

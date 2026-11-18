@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -43,10 +43,19 @@ test('the emitted hook command runs with its model and arguments', (t) => {
   const plugin = path.join(cwd, 'byline');
   mkdirSync(plugin);
   writeFileSync(path.join(plugin, 'package.json'), JSON.stringify({ name: 'byline', version: '1.0.0', type: 'module', main: './index.js' }));
-  writeFileSync(path.join(plugin, 'index.js'), 'export default function run(args, context) { context.stdout.write(JSON.stringify({ args, model: context.model })); return 0; }\n');
+  writeFileSync(path.join(plugin, 'index.js'), `import { readFileSync, writeFileSync } from 'node:fs';
+import path from 'node:path';
+export default function run(args, context) {
+  const text = args[args.indexOf('--message') + 1] + '\\n' + context.attribution.renderTrailer() + '\\n';
+  const note = path.join(context.cwd, context.model + '.txt');
+  writeFileSync(note, text);
+  context.stdout.write(readFileSync(note, 'utf8'));
+  return 0;
+}
+`);
   writeFileSync(path.join(cwd, '.cosplaying.json'), JSON.stringify({ plugins: [plugin] }));
   const env = { COSPLAYING_BYLINE_BIN: path.join(plugin, 'index.js') };
-  const rewritten = run(['rewrite', '--model', 'Example Model', '--', 'byline --list'], home, cwd, env);
+  const rewritten = run(['rewrite', '--model', 'Example Model', '--', 'byline --message "A note with spaces"'], home, cwd, env);
   assert.equal(rewritten.status, 0, rewritten.stderr);
   assert.equal(rewritten.stderr, '');
   const executed = spawnSync(rewritten.stdout.trim(), {
@@ -55,5 +64,7 @@ test('the emitted hook command runs with its model and arguments', (t) => {
   });
   assert.equal(executed.status, 0, executed.stderr);
   assert.equal(executed.stderr, '');
-  assert.deepEqual(JSON.parse(executed.stdout), { args: ['--list'], model: 'Example Model' });
+  const expected = 'A note with spaces\nAI-Assisted-By: Example Model via cosplaying (https://github.com/3rd-eden/cosplaying). AI Assisted text may contain mistakes, please verify.\n';
+  assert.equal(executed.stdout, expected);
+  assert.equal(readFileSync(path.join(cwd, 'Example Model.txt'), 'utf8'), expected);
 });

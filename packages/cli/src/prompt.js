@@ -23,23 +23,29 @@ export function harnessLabel(harness) {
 /**
  * Builds the text that a harness shows when a session starts.
  *
- * The text tells the agent to prefix authored writes with this CLI. An empty command list uses the text that tells the agent not to invent wrapped commands.
+ * The text tells the agent to prefix authored writes with this CLI. An empty command list uses the empty prompt, which tells the agent not to invent wrapped commands. `{harness}`, `{executable}`, `{commands}`, `{model}`, `{link}`, and the keys in `variables` are replaced in either prompt.
  *
  * @param {object} options
  * @param {string} options.harness Harness id. The text shows the display name for this id.
  * @param {string} options.executable Quoted invocation of this CLI. The text tells the agent to put this command before a wrapped write.
- * @param {string[]} options.commands Plugin command names that shell rewrite wraps. The names are sorted before they are inserted.
- * @param {string} [options.template] Session template from settings. `{harness}`, `{executable}`, and `{commands}` are replaced. The built-in template is used when this is omitted.
+ * @param {string[]} options.commands Plugin command names that shell rewrite wraps. The names are sorted before they are inserted. An empty list selects the empty prompt.
+ * @param {string} [options.template] Session prompt from settings. Used when `commands` is not empty. The built-in session prompt is used when this is omitted or empty.
+ * @param {string} [options.empty] Empty prompt from settings. Used when `commands` is empty. The built-in empty prompt is used when this is omitted or empty.
+ * @param {string} [options.model] Model name for this session. An empty name stays empty in `{model}`.
+ * @param {string} [options.link] Policy URL from settings. It is inserted as stored.
+ * @param {Record<string, string>} [options.variables] Extra `{name}` values from settings. `harness`, `executable`, `commands`, `model`, and `link` replace a variable of the same name.
  * @returns {string} Prompt text for the session-start hook.
  */
-export function renderSession({ harness, executable, commands, template }) {
+export function renderSession({ harness, executable, commands, template, empty, model, link, variables }) {
   const names = [...commands].sort((left, right) => left.localeCompare(right));
-  if (names.length === 0) return EMPTY_SESSION;
-  const source = template || DEFAULT_SESSION;
+  const source = names.length === 0 ? (empty || EMPTY_SESSION) : (template || DEFAULT_SESSION);
   const values = {
+    ...(variables ?? {}),
     executable,
     harness: harnessLabel(harness),
     commands: names.join(', '),
+    link: link || '',
+    model: model || '',
   };
   return replaces(source, /\{()([^{}]+)\}/g, values);
 }

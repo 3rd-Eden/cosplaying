@@ -87,7 +87,7 @@ export default async function run(args, context) {
         if (process.platform !== 'win32') assert.equal(copy.mode, 0o600);
         assert.equal(path.dirname(copy.file), temp);
         assert.equal(path.extname(copy.file), path.extname(source));
-        assert.equal(copy.text, 'Hello\n\n<!-- cosplaying:attribution -->\nAuthored by Example via [cosplaying](https://github.com/3rd-eden/cosplaying). AI Assisted text may contain mistakes, please verify.\n<!-- /cosplaying:attribution -->\n');
+        assert.equal(copy.text, 'Hello\n\n<!-- cosplaying:attribution -->\n> 🤖 Authored by Example via [cosplaying](https://github.com/3rd-eden/cosplaying). AI Assisted text may contain mistakes, please verify.\n<!-- /cosplaying:attribution -->\n');
         assert.equal(existsSync(copy.file), false);
       } else {
         assert.equal(result.stdout, '');

@@ -444,7 +444,7 @@ test('push blocks the matching refspec because it can publish other branches', (
   assert.equal(git(['--git-dir', remote, 'for-each-ref', '--format=%(refname)'], fixture.env, fixture.repo), '');
 });
 
-test('push checks only the selected destination ref on a remote', () => {
+test('push handles large remote ref lists, excludes published commits, and blocks unpublished commits', () => {
   const fixture = repository();
   const remote = path.join(fixture.home, 'origin.git');
   git(['init', '--quiet', '--bare', '--initial-branch=main', remote], fixture.env, fixture.repo);
@@ -454,13 +454,32 @@ test('push checks only the selected destination ref on a remote', () => {
   git(['push', '--quiet', '--set-upstream', 'origin', 'main'], fixture.env, fixture.repo);
   const sha = unattributed(fixture.repo, fixture.env, 'Already on another remote branch');
   git(['push', '--quiet', 'origin', 'HEAD:refs/heads/known'], fixture.env, fixture.repo);
+  const refs = Array.from({ length: 16000 }, (_, index) => `create refs/heads/published-history-${String(index).padStart(5, '0')}-branch ${sha}`).join('\n');
+  const created = spawnSync('git', ['--git-dir', remote, 'update-ref', '--stdin'], {
+    cwd: fixture.repo, env: fixture.env, encoding: 'utf8', input: `${refs}\n`,
+  });
+  assert.equal(created.status, 0, created.stderr);
+  const advertised = spawnSync('git', ['ls-remote', '--refs', remote], {
+    cwd: fixture.repo, env: fixture.env, encoding: 'utf8', maxBuffer: Infinity,
+  });
+  assert.equal(advertised.status, 0, advertised.stderr);
+  assert.ok(Buffer.byteLength(advertised.stdout) > 1024 * 1024);
 
   const pushed = run(['hook', '--model', 'Example', '--', 'git', 'push', '--quiet', 'origin', 'HEAD:refs/heads/new'], fixture);
 
-  assert.equal(pushed.status, 2);
-  assert.match(pushed.stderr, /BLOCKED \(command not run\)/);
-  assert.match(pushed.stderr, new RegExp(sha.slice(0, 12)));
-  assert.equal(git(['--git-dir', remote, 'for-each-ref', '--format=%(refname)', 'refs/heads/new'], fixture.env, fixture.repo), '');
+  assert.equal(pushed.status, 0, pushed.stderr);
+  assert.equal(pushed.stdout, '');
+  assert.equal(pushed.stderr, '');
+  assert.equal(git(['--git-dir', remote, 'rev-parse', 'refs/heads/new'], fixture.env, fixture.repo).trim(), sha);
+
+  const unpublished = unattributed(fixture.repo, fixture.env, 'Not on the selected remote');
+  const blocked = run(['hook', '--model', 'Example', '--', 'git', 'push', '--quiet', 'origin', 'HEAD:refs/heads/new'], fixture);
+  assert.equal(blocked.status, 2);
+  assert.equal(blocked.stdout, '');
+  assert.match(blocked.stderr, /BLOCKED \(command not run\)/);
+  assert.match(blocked.stderr, new RegExp(unpublished.slice(0, 12)));
+  assert.doesNotMatch(blocked.stderr, new RegExp(sha.slice(0, 12)));
+  assert.equal(git(['--git-dir', remote, 'rev-parse', 'refs/heads/new'], fixture.env, fixture.repo).trim(), sha);
 });
 
 test('push blocks matching branches when another branch has no trailer', () => {
