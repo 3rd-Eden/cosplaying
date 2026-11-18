@@ -182,17 +182,19 @@ export function userConfigDirectory({ home = homedir() } = {}) {
 /**
  * Loads the settings that attribution, session prompts, and plugin selection use.
  *
- * Defaults are applied first, then the user file, then the project file. A project value replaces a user value. `variables` are merged by key.
+ * Apply built-in defaults, wrapper defaults, user settings, and project settings in that order. `variables` are merged by key.
  *
  * @param {object} [options]
  * @param {string} [options.cwd=process.cwd()] Directory where the project search starts.
  * @param {string} [options.home=homedir()] Home directory used to find the user file.
- * @returns {{markdown: string, trailer: string, link: string, plugins: string[], variables: Record<string, string>, session?: string, empty?: string}} Effective settings. `session` and `empty` are present only when a file sets them.
+ * @param {object} [options.defaults] Wrapper defaults in the same format as a settings file.
+ * @returns {{markdown: string, trailer: string, link: string, plugins: string[], variables: Record<string, string>, session?: string, empty?: string}} Effective settings.
  * @throws {CosplayError} A settings file cannot be parsed, or a file sets the model.
  */
-export function loadConfig({ cwd = process.cwd(), home = homedir() } = {}) {
+export function loadConfig({ cwd = process.cwd(), home = homedir(), defaults: wrapperDefaults } = {}) {
   return [
     defaults,
+    normalize(wrapperDefaults),
     read(userConfig, userConfigDirectory({ home })),
     read(projectConfig, cwd),
   ].reduce(merge);

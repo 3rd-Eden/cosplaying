@@ -181,7 +181,7 @@ Use one of these configuration filenames:
 
 For user settings, put the file in `~/.config/cosplaying`. For project settings, put the file in your project directory.
 
-`cosmiconfig` searches for project settings from the current directory. Its project search stops at a directory with `package.json`. The configuration sequence is defaults, user settings, then project settings.
+`cosmiconfig` searches for project settings from the current directory. Its project search stops at a directory with `package.json`. Settings apply in this order: built-in defaults, company defaults if supplied, user settings, then project settings.
 
 Subsequent settings replace previous settings. The `variables` objects merge. A project `plugins` list replaces the user list; it does not extend that list.
 
@@ -222,6 +222,33 @@ The Markdown renderer adds these markers around the byline:
 Do not put these markers in a template. The trailer renderer adds the `AI-Assisted-By:` key. The trailer text must stay on one line. A policy URL must use HTTP or HTTPS.
 
 Do not set `model` or `attribution.model` in a configuration file. Supply the model for each command or agent session.
+
+## Distribute a company CLI
+
+Add `cosplaying` as a dependency of your npm package. Set its `bin` to an executable Node script such as `bin/company-ai.mjs`. For example, set `"bin": { "company-ai": "./bin/company-ai.mjs" }` in `package.json`.
+
+```js
+#!/usr/bin/env node
+import cosplaying from 'cosplaying';
+
+process.exitCode = await cosplaying({
+  entrypoint: import.meta.url,
+  defaults: {
+    plugins: ['git', 'gh'],
+    attribution: {
+      link: 'https://example.com/ai-policy',
+      templates: {
+        markdown: '> AI-assisted by {model}. See the [company AI policy]({link}).',
+        trailer: '{model} ({link})',
+      },
+    },
+  },
+});
+```
+
+Run `company-ai install` to register the wrapper with your harnesses. The `entrypoint` tells cosplaying which script to run for installed hooks, rewritten commands, and the session prompt. User and project settings can replace the company attribution and plugin defaults. A `plugins` setting replaces the full list.
+
+`cosplaying(options)` reads the arguments from the command line. To supply arguments in code, call `cosplaying(options, ['--help'])`.
 
 ## Set the session instructions
 

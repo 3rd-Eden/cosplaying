@@ -234,7 +234,7 @@ test('PATH cosplaying with a different version is a finding', async (t) => {
   const searchPath = process.platform === 'win32' ? binDir : [binDir, '/usr/bin', '/bin'].join(path.delimiter);
   const doctor = run(['doctor'], home, cwd, { PATH: searchPath });
   assert.equal(doctor.status, 1, doctor.stderr);
-  assert.match(doctor.stderr, /PATH: version 9\.9\.9 differs from 0\.1\.0/);
+  assert.ok(doctor.stderr.includes(`PATH: version 9.9.9 differs from ${manifest.version}.`), doctor.stderr);
 });
 
 test('--project-dir must be a directory', () => {

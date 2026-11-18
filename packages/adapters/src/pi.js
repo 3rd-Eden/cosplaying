@@ -1,5 +1,5 @@
 import path from 'node:path';
-import { realMainPath } from 'cosplaying/cli/paths';
+import { cliCommand } from 'cosplaying/cli/paths';
 import { ExtensionHarness, executableGuardSource } from './extension.js';
 
 /**
@@ -38,19 +38,19 @@ export class Pi extends ExtensionHarness {
    *
    * @param {string[]} commands Plugin command names the script must recognize.
    * @param {string} [bin] `cosplaying` executable the script spawns. When omitted, the script uses Node and `main.js`.
+   * @param {string} [entrypoint] Wrapper script used in place of `main.js`.
    * @returns {string} Complete extension source, starting with the ownership comment.
    */
-  render(commands, bin) {
+  render(commands, bin, entrypoint) {
     const marker = this.marker();
     const names = [...commands].sort((left, right) => left.localeCompare(right));
-    const executable = JSON.stringify(bin || process.execPath);
-    const args = JSON.stringify(bin ? [] : [realMainPath()]);
+    const [executable, ...args] = cliCommand(bin, entrypoint);
     const commandList = JSON.stringify(names);
     return `${marker}
 import { spawnSync } from 'node:child_process';
 
-const EXECUTABLE = ${executable};
-const ARGS = ${args};
+const EXECUTABLE = ${JSON.stringify(executable)};
+const ARGS = ${JSON.stringify(args)};
 const COMMANDS = ${commandList};
 
 /**

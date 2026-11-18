@@ -85,7 +85,7 @@ export async function enableBundledPlugin(name, context) {
       });
     }
     const { file, data } = userSettings(context);
-    const plugins = data.plugins ?? [];
+    const plugins = data.plugins ?? context.defaults?.plugins ?? [];
     if (!plugins.includes(name)) {
       data.plugins = [...plugins, name];
       writeJsonAtomic(file, data);
@@ -120,11 +120,11 @@ export async function enableBundledPlugin(name, context) {
 export async function disableBundledPlugin(name, context) {
   try {
     assertShipped(name, bundledPlugins());
-    const found = findUserConfig(context);
-    if (found?.config?.plugins?.includes(name)) {
-      const data = { ...found.config };
-      data.plugins = data.plugins.filter((entry) => entry !== name);
-      writeJsonAtomic(found.filepath, data);
+    const { file, data } = userSettings(context);
+    const plugins = data.plugins ?? context.defaults?.plugins ?? [];
+    if (plugins.includes(name)) {
+      data.plugins = plugins.filter((entry) => entry !== name);
+      writeJsonAtomic(file, data);
     }
     const project = findProjectConfig(context);
     if (project?.config?.plugins?.includes(name)) {

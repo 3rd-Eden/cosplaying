@@ -1,6 +1,6 @@
 {
   "name": "cosplaying",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "Add a visible AI attribution byline to CLI writes routed through coding-agent hooks.",
   "homepage": "https://github.com/3rd-Eden/cosplaying#readme",
   "repository": {

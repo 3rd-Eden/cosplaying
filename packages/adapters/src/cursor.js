@@ -44,10 +44,11 @@ export class Cursor extends Harness {
    * @param {string} event Cursor event name.
    * @param {NodeJS.Platform} [platform] Platform used to quote the hook command.
    * @param {string} [bin] `cosplaying` executable embedded in the command.
+   * @param {string} [entrypoint] Wrapper script used in place of `main.js`.
    * @returns {Record<string, unknown>} `{ command }` for session start. `{ command, matcher, failClosed }` for `preToolUse`.
    */
-  hookEntry(event, platform, bin) {
-    const command = this.hookCommand(event, platform, bin);
+  hookEntry(event, platform, bin, entrypoint) {
+    const command = this.hookCommand(event, platform, bin, entrypoint);
     if (event === 'preToolUse') return { command, matcher: 'Shell', failClosed: true };
     return { command };
   }

@@ -1,6 +1,8 @@
 import { Command } from 'commander';
 import { existsSync, realpathSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
+import { resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { normalizeIdentity } from 'cosplaying/attribution';
 import {
   defaultSpawn,
@@ -99,8 +101,9 @@ function pluginHelp(plugins) {
  *
  * The commands are `hook`, `agent-hook`, `rewrite`, `install`, `uninstall`, `doctor`, and `plugin`. No arguments print help and exit with status 2.
  *
- * @param {string[]} argv Arguments after the program name.
- * @param {object} [options] Streams and paths. Tests pass these so the developer home and the real process are not used.
+ * @param {object} [options] Wrapper settings and runtime options.
+ * @param {object} [options.defaults] Wrapper defaults in the same format as a settings file.
+ * @param {string | URL} [options.entrypoint] Path or file URL of the wrapper script to run with Node.
  * @param {NodeJS.WritableStream} [options.stdout] Stream for help and command output. The process stdout is used when this is omitted.
  * @param {NodeJS.WritableStream} [options.stderr] Stream for errors. The process stderr is used when this is omitted.
  * @param {NodeJS.ProcessEnv} [options.env] Environment for settings, plugins, and model lookup.
@@ -108,10 +111,16 @@ function pluginHelp(plugins) {
  * @param {string} [options.home] Home directory for user settings and harness files.
  * @param {NodeJS.Platform} [options.platform] Platform used to quote hook commands.
  * @param {NodeJS.ReadStream} [options.stdin] Stdin for `agent-hook` and plugins.
+ * @param {string[]} [argv=process.argv.slice(2)] Arguments after the program name.
  * @returns {Promise<number>} Process exit code. `0` for success and for help or version. `1` for a failed command. `2` for bad arguments or an unknown command.
  */
-export async function main(argv, options = {}) {
+export async function cosplaying(options = {}, argv = process.argv.slice(2)) {
+  const { entrypoint } = options;
   const context = {
+    defaults: options.defaults,
+    entrypoint: entrypoint && realpathSync(typeof entrypoint === 'string' && !entrypoint.startsWith('file:')
+      ? resolve(entrypoint)
+      : fileURLToPath(entrypoint)),
     stdout: options.stdout || process.stdout,
     stderr: options.stderr || process.stderr,
     env: options.env || process.env,
@@ -434,7 +443,7 @@ async function runHook(argv, commandArgs, options, context) {
       }).message);
     return 1;
   }
-  const own = [realMainPath()];
+  const own = [realMainPath(), context.entrypoint];
   try {
     own.push(realpathSync(process.execPath));
   } catch {
@@ -500,7 +509,7 @@ async function runRewrite(words, options, context) {
     const { plugins } = await loadPlugins(context);
     for (const plugin of plugins) {
       if (plugin.descriptor.intercept === false) continue;
-      routes[plugin.command] = commandPrefix(plugin.command, resolved.model, context.platform);
+      routes[plugin.command] = commandPrefix(plugin.command, resolved.model, context.platform, context.entrypoint);
     }
   } catch (error) {
     report(context.stderr, error.message);
@@ -778,9 +787,14 @@ async function regenerateExtensions(context) {
   }
 }
 
-const entry = process.argv[1] ? realpathSync(process.argv[1]) : '';
+/** Runs the CLI with the original argument order. */
+export function main(argv, options) {
+  return cosplaying(options, argv);
+}
+
+const entry = process.argv[1] && existsSync(process.argv[1]) ? realpathSync(process.argv[1]) : '';
 if (entry && entry === realMainPath()) {
-  main(process.argv.slice(2)).then((code) => {
+  cosplaying().then((code) => {
     process.exit(code);
   });
 }
