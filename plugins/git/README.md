@@ -28,7 +28,7 @@ Rebase commits are chosen from new HEAD reflog entries. A signed commit is not r
 
 `push` with a model blocks outgoing commits from the local committer that lack `AI-Assisted-By`. The push does not run. With no model, the push is not checked. Other Git commands pass through.
 
-For a push with a model, cosplaying examines each explicit or configured refspec against its destination ref. It stops matching, negative, and wildcard refspecs. It also stops `--all`, `--mirror`, and `--tags`. Those options can send multiple refs.
+For a push with a model, cosplaying examines each explicit or configured refspec against the commits already on each push URL. Commits reachable from an advertised remote ref are excluded when their commit objects are available locally. It stops matching, negative, and wildcard refspecs. It also stops `--all`, `--mirror`, and `--tags`. Those options can send multiple refs.
 
 Dry runs and ref deletions do not use the outgoing commit check. If cosplaying cannot determine or inspect a push destination, it stops the push.
 

@@ -444,7 +444,7 @@ test('push blocks the matching refspec because it can publish other branches', (
   assert.equal(git(['--git-dir', remote, 'for-each-ref', '--format=%(refname)'], fixture.env, fixture.repo), '');
 });
 
-test('push checks only the selected destination ref on a remote', () => {
+test('push excludes commits already on the selected remote and blocks unpublished commits', () => {
   const fixture = repository();
   const remote = path.join(fixture.home, 'origin.git');
   git(['init', '--quiet', '--bare', '--initial-branch=main', remote], fixture.env, fixture.repo);
@@ -457,10 +457,19 @@ test('push checks only the selected destination ref on a remote', () => {
 
   const pushed = run(['hook', '--model', 'Example', '--', 'git', 'push', '--quiet', 'origin', 'HEAD:refs/heads/new'], fixture);
 
-  assert.equal(pushed.status, 2);
-  assert.match(pushed.stderr, /BLOCKED \(command not run\)/);
-  assert.match(pushed.stderr, new RegExp(sha.slice(0, 12)));
-  assert.equal(git(['--git-dir', remote, 'for-each-ref', '--format=%(refname)', 'refs/heads/new'], fixture.env, fixture.repo), '');
+  assert.equal(pushed.status, 0, pushed.stderr);
+  assert.equal(pushed.stdout, '');
+  assert.equal(pushed.stderr, '');
+  assert.equal(git(['--git-dir', remote, 'rev-parse', 'refs/heads/new'], fixture.env, fixture.repo).trim(), sha);
+
+  const unpublished = unattributed(fixture.repo, fixture.env, 'Not on the selected remote');
+  const blocked = run(['hook', '--model', 'Example', '--', 'git', 'push', '--quiet', 'origin', 'HEAD:refs/heads/new'], fixture);
+  assert.equal(blocked.status, 2);
+  assert.equal(blocked.stdout, '');
+  assert.match(blocked.stderr, /BLOCKED \(command not run\)/);
+  assert.match(blocked.stderr, new RegExp(unpublished.slice(0, 12)));
+  assert.doesNotMatch(blocked.stderr, new RegExp(sha.slice(0, 12)));
+  assert.equal(git(['--git-dir', remote, 'rev-parse', 'refs/heads/new'], fixture.env, fixture.repo).trim(), sha);
 });
 
 test('push blocks matching branches when another branch has no trailer', () => {
