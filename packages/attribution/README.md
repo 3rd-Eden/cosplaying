@@ -1,30 +1,56 @@
-# @cosplaying/attribution
+# Attribution API
 
-Private workspace package. Import it as `cosplaying/attribution`.
+Import `cosplaying/attribution` to add a Markdown byline to a body or render a Git trailer. Inside a plugin, use `context.attribution` so the CLI supplies the current model and configured wording. Direct callers supply the model, template, and any policy link themselves. [Plugin context](../plugin/README.md#use-the-hook-context)
 
-## What it does
+## Add or replace a Markdown byline
 
-Renders the markdown byline and the single-line `AI-Assisted-By` trailer, and replaces one trailing managed markdown block.
+```js
+import { annotateMarkdown } from 'cosplaying/attribution';
 
-## Scope
+const body = annotateMarkdown('The build passed.', {
+  model: 'Example Model',
+  link: 'https://example.com/ai-policy',
+  template: '> AI-assisted by {model}. [AI policy]({link}).',
+});
+```
 
-In scope: the marker comments, markdown escaping of the model, percent-encoding of the link, and absolute `http:` or `https:` links. `replaces` fills `{name}` tags from the model, the link, and `variables`.
+```markdown
+The build passed.
 
-A missing or empty model throws. An empty link stays empty. Any other link must parse as an absolute `http:` or `https:` URL. A template that already contains the attribution markers throws, because the renderer could not find its own block later. A rendered trailer that contains a line break throws, because Git stores `AI-Assisted-By` as one line. This package does not load settings, choose a model, write files, or decide whether a comment or commit needs a disclosure.
+<!-- cosplaying:attribution -->
+> AI-assisted by Example Model. [AI policy](https://example.com/ai-policy).
+<!-- /cosplaying:attribution -->
+```
 
-## Public API
+On an edit, pass the existing body to `annotateMarkdown`. The function replaces one marked block at the end and adds a final newline. A block followed by other content stays in the body. The renderer escapes Markdown characters in the model name and percent-encodes whitespace, parentheses, and angle brackets in the link. Keep both markers out of the template. The renderer supplies them.
 
-- `ATTRIBUTION_MARKER` is `<!-- cosplaying:attribution -->`. `ATTRIBUTION_END_MARKER` is `<!-- /cosplaying:attribution -->`.
-- `normalizeIdentity(value)` trims and collapses internal whitespace. A missing, null, or empty value becomes an empty string.
-- `validateLink(link)` returns `''` for `undefined`, `null`, or `''`. Any other value must be an `http:` or `https:` URL. The result is `url.href`.
-- `stripAttribution(value)` removes one trailing managed block and the whitespace before it. The trimmed text must end with the closing marker. An opening marker must precede that marker. Any other text is returned unchanged.
-- `annotateMarkdown(value, { model, template, link, variables })` removes one trailing block and whitespace from the end of the body. It adds a blank line after a non-empty body. Then it adds the opening marker, template text, closing marker, and final newline. The model is escaped for Markdown. Whitespace, parentheses, and angle brackets in the link are percent-encoded. `{name}` tags are filled by `replaces` from the checked model, the checked link, and `variables`.
-- `renderTrailer(model, { template, link, variables })` returns `AI-Assisted-By: ` plus one rendered line. A result with a carriage return or newline throws.
+## Render a Git trailer
 
-The renderer functions do not supply default templates or links. For default wording, direct callers must supply a template. The CLI supplies its configured template, link, and variables.
+```js
+import { renderTrailer } from 'cosplaying/attribution';
 
-The `{model}` tag is optional. `replaces` fills the supplied values without a fixed list of tag names.
+const trailer = renderTrailer('Example Model', {
+  template: '{model} ({link})',
+  link: 'https://example.com/ai-policy',
+});
+// AI-Assisted-By: Example Model (https://example.com/ai-policy)
+```
 
-## Related packages
+Use the result as a complete trailer line. The renderer throws a `CosplayError` if the filled trailer contains a line break.
 
-`replaces` fills `{name}` tags. `cosmiconfig` supplies the template, link, and variables over the defaults. `@cosplaying/cli` passes `annotateMarkdown` and `renderTrailer` to a plugin with the invocation model and the loaded settings. `@cosplaying/plugin` can copy file text and call a renderer; it does not format the byline. Failures throw `CosplayError`.
+Both renderers require a model name with at least one non-whitespace character. The template can omit `{model}`. The renderer fills tags from `variables` and supplies its own values for `{model}` and `{link}`. A tag without a value becomes empty. An omitted template produces empty attribution text, so supply a template when you call these renderers directly.
+
+<details>
+<summary>Utilities and marker constants</summary>
+
+| Export | Result |
+| --- | --- |
+| `normalizeIdentity(value)` | Trims and collapses whitespace. A missing or empty value yields an empty string. |
+| `validateLink(link)` | Returns the normalized absolute HTTP or HTTPS URL. An omitted, null, or empty link yields an empty string. An invalid link throws `CosplayError`. |
+| `stripAttribution(text)` | Removes one trailing marked block and the whitespace immediately before it. Returns the original text if there is no complete trailing block. |
+| `ATTRIBUTION_MARKER` | `<!-- cosplaying:attribution -->` |
+| `ATTRIBUTION_END_MARKER` | `<!-- /cosplaying:attribution -->` |
+
+</details>
+
+For the default templates and policy URL, see [Set the attribution text](../../README.md#set-the-attribution-text). For the scope of the disclosure, see [Attribution limits](../../README.md#attribution-limits).

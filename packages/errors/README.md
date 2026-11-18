@@ -1,30 +1,31 @@
-# @cosplaying/errors
+# Error API
 
-Private workspace package. Import it as `cosplaying/errors`.
+Import `CosplayError` from `cosplaying/errors` for failures that a user or coding agent can correct. Put the failure, the input that caused it, and the corrective action in the message.
 
-## What it does
+```js
+import { CosplayError } from 'cosplaying/errors';
 
-`CosplayError` extends `LayerError` from `@mcp-layer/error` and sets this project's defaults: `scope` is `cosplaying` and `docs` is `github.com/3rd-Eden/cosplay/tree/main/packages`. A user-facing failure throws `CosplayError`. The explanation is the `message`.
+throw new CosplayError({
+  name: 'plugin',
+  method: 'readNote',
+  message: 'Could not read %s. Check that the file exists and retry.',
+  args: ['note.md'],
+});
+```
 
-## Scope
+Use `name` for the component and `method` for the operation. `args` replaces each `%s` in order. Set `cause` when you catch a lower-level error and want to retain it.
 
-In scope: `CosplayError`, `docs`, and `hashtag`. The base class builds `scope/name(method): ` plus the message, then a link from `docs` and `hashtag`. `name` is the slug in that link. `method` is the function that failed. `message` states what happened, the bad value, and the next action.
+`CosplayError` extends `LayerError` from `@mcp-layer/error`. It supplies the `cosplaying` scope and the package documentation base URL. At a throw site, use those defaults. The example starts with `cosplaying/plugin(readNote):` and includes a documentation link. For troubleshooting steps by component, see the [error catalog](../../docs/errors.md).
 
-`args` fills each `%s`. `cause` is the caught error. Callers do not pass `scope` or `docs`.
+<details>
+<summary>Fields and documentation references</summary>
 
-The wording of `message` stays at the throw site. This package does not add a support-channel line. `@cosplaying/adapters` writes the Pi and OpenCode extension files, and those files do not import this package. The OpenCode extension throws a plain `Error` if it cannot rewrite a registered command. The Pi extension returns a block response for that failure.
+- `error.name` is `CosplayError`. `error.package` is `cosplaying/<name>` for an unscoped name or the original name for a scoped name. `error.method` and `error.cause` retain their input values.
+- The base class applies `vars` to `{key}` placeholders before it applies `args`. It also copies extra fields to the error.
+- `hashtag(text)` returns `#` followed by six uppercase hexadecimal digits.
+- `docs(options)` builds `error.docs` from the documentation base, the unscoped component name, and `README.md`. The default base is `https://github.com/3rd-Eden/cosplay/tree/main/packages`.
+- `error.reference` is calculated from the component, method, and message template joined by hyphens. The generated URL uses `#error-` followed by the lowercase reference digits.
 
-## Public API
+</details>
 
-- `CosplayError` extends `LayerError` from `@mcp-layer/error`. `new CosplayError({ name, method, message, args, cause })` sets `error.name` to `CosplayError`. `error.package` is `cosplaying/name` when `name` has no `@` prefix, and `name` when it does. `error.method` is `method`. The thrown message is `error.package(method): ` plus `message` after replacement, a blank line, and `For more information visit: ` plus the docs URL.
-
-  `cause` is `error.cause`. Any other field is copied onto the error. Omitted `scope` is `cosplaying`. Omitted `docs` is `github.com/3rd-Eden/cosplay/tree/main/packages`. A caller can still pass either field.
-- `args` replaces each `%s` in order. `vars` replaces `{key}` from that object when it has keys, before `args`. Callers in this repo pass `args`.
-- `hashtag(text)` returns `#` and six uppercase hex digits from the sine color hash of `text`.
-- `docs({ name, method, message, docs, scope })` returns the URL `CosplayError` stores on `error.docs`. The base is `docs` when it starts with `http://` or `https://`, and `https://` plus `docs` otherwise. The path is that base, the slug, and `README.md`. The slug is `name`. When `name` starts with `@`, the slug is the segment after `/`, or `name` without `@` when that segment is missing.
-
-  The fragment is `#error-` plus the lowercase hashtag of `name`, `method`, and the message template joined by `-`. `error.reference` is `#` plus those six digits in uppercase.
-
-## Related packages
-
-`@mcp-layer/error` implements the class, the hashtag, and the docs URL. Its own defaults are scope `@mcp-layer` and the mcp-layer README. `@cosplaying/cli`, `@cosplaying/hooks`, `@cosplaying/plugin`, and `@cosplaying/attribution` import `CosplayError` from `cosplaying/errors`. `@cosplaying/adapters` does not throw `CosplayError`. Its Pi and OpenCode files tell the model to retry through `cosplaying hook` with the current model.
+The generated Pi and OpenCode files run inside their respective agents. OpenCode uses a plain `Error` when it cannot rewrite a registered command. Pi returns a block response. Both direct the agent to retry through `cosplaying hook` with the current model. [Harness adapters](../adapters/README.md)

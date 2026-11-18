@@ -1,42 +1,55 @@
-# @cosplaying/hooks
+# Hook file API
 
-Private workspace package. Import it as `cosplaying/hooks`.
+Import `cosplaying/hooks` to update a harness configuration file. The [harness adapters](../adapters/README.md) select the path, event names, and command text. This package writes the file and uses an ownership marker to identify entries from the same installation.
 
-## What it does
+## Add hooks to a JSON file
 
-Reads and writes harness config files. It removes entries that contain the caller’s owner marker, appends the replacements last, and refuses to replace a generated file that lacks its marker.
+This example updates a Codex-style hook list. Use the adapter when you also need it to select the file path and form the command.
 
-## Scope
+```js
+import { installJsonHooks, uninstallJsonHooks } from 'cosplaying/hooks';
 
-In scope: ownership checks, JSON reconcile, atomic text and JSON writes, and install or delete of a generated JavaScript file when the marker is present.
+const file = './.codex/hooks.json';
+const owner = '# cosplaying:codex';
 
-`@cosplaying/adapters` chooses the harness paths, events, command strings, and Pi or OpenCode source, then passes them in. This package does not load settings, plugins, or attribution templates. The CLI uses `cosmiconfig` for settings.
+installJsonHooks(file, owner, {
+  PreToolUse: [{
+    hooks: [{
+      type: 'command',
+      command: `cosplaying agent-hook codex PreToolUse ${owner}`,
+    }],
+  }],
+});
 
-Uninstall rewrites a JSON config and leaves the file in place. A missing JSON file is read as `{}` and then written as `{}`. An empty event array is removed. A nested entry whose `hooks` array is empty is removed. An empty `hooks` object is removed.
+// To remove these hooks later:
+// uninstallJsonHooks(file, owner);
+```
 
-Invalid UTF-8, invalid JSON, or a non-object root throws from the read and does not write. `reconcileHooks` throws if `hooks` is not an object. It also throws if an event in `additions` already has a non-array value. `removeOwnedHooks` leaves a non-array event unchanged.
+An entry belongs to the caller if its `command`, `bash`, or `powershell` string contains the owner marker. This check also looks inside nested `hooks` arrays. On install, the package removes the old entries with that marker and appends the replacements after the other hooks. A supplied `version` fills a missing version. Other configuration keys keep their values.
 
-## Public API
+On uninstall, the package removes the marked hooks and prunes empty groups, event arrays, and the empty `hooks` object. It writes the resulting JSON to the same path. A missing file is read as an empty object, so uninstall on a missing file can create a file containing `{}`.
 
-- `quoteShell(value, platform)` quotes one value. On Windows the value is wrapped in double quotes and each embedded quote is doubled. On other platforms the value is wrapped in single quotes and an embedded single quote is written as `'\''`.
-- `isOwned(entry, owner)` is true when `command`, `bash`, or `powershell` contains `owner`, or a nested `hooks` entry is owned.
-- `stripOwned(entries, owner)` returns the entries that are not owned.
-- `readJsonConfig(file)` returns `{}` when the file is missing. It returns the object root otherwise.
-- `reconcileHooks(value, owner, additions, { version })` copies the root and keeps foreign keys. It sets `version` only if you supply the option and the key is absent. It appends `additions` after the unowned entries for each event.
-- `removeOwnedHooks(value, owner)` drops owned entries. A non-array event is left as it is. A value with no `hooks` object is returned unchanged.
-- `readUtf8File(file)` reads the file as bytes and returns UTF-8 text. If UTF-8 encoding of that text does not match the source bytes, it throws `CosplayError` from `readUtf8File`.
-- `writeTextAtomic(file, text)` creates the parent directory at mode `0700` and writes UTF-8 text at mode `0600` through `write-file-atomic`. It does not compare the previous contents. If the destination is a symlink, it throws and does not write. A `chmod` failure is ignored.
-- `writeJsonAtomic(file, value)` writes `JSON.stringify(value, null, 2)` plus a newline. Equal text is not rewritten. It returns `false` when the text is unchanged and `true` after a write.
-- `installJsonHooks(file, owner, additions, options)` reads, reconciles, writes, and returns the reconciled object.
-- `uninstallJsonHooks(file, owner)` reads, removes owned entries, writes, and returns the reconciled object.
-- `installHookFile(file, marker, contents)` writes `contents` when the file is missing, or when it contains `marker` and the text differs. A file that lacks `marker` and differs throws. Equal contents return `false` without a write. Invalid UTF-8 throws and does not write. A write returns `true`.
-- `uninstallHookFile(file, marker)` deletes the file only when `marker` is present. A missing file, or a file without `marker`, returns `false`. Invalid UTF-8 throws and does not delete the file.
-- `fileExists(file)` is `stat` success.
+Invalid UTF-8, invalid JSON, or a root value other than an object stops the update. Install also stops if `hooks` has the wrong shape or an event it must update is not an array. Uninstall preserves event values that are not arrays.
 
-`owner` is the marker string from the caller, such as `# cosplaying:<harness>` or `// cosplaying:<harness>`.
+## Install a standalone extension
 
-## Related packages
+Use `installHookFile(file, marker, contents)` for a complete generated file, such as a Pi or OpenCode extension. Put the marker in the generated source. The function returns `true` after a write and `false` if the existing contents already match. If the existing file differs and lacks the marker, the function throws.
 
-`@cosplaying/adapters` calls these functions to install and remove harness files. The CLI uses them for doctor, configuration updates, and session-model files.
+Use `uninstallHookFile(file, marker)` to delete a marked file. It returns `false` for a missing or unmarked file. Both functions stop on invalid UTF-8.
 
-File operations can throw `CosplayError`. Direct file reads, deletes, and atomic writes can also propagate file-system errors.
+<details>
+<summary>Ownership and file utilities</summary>
+
+| Export | Use |
+| --- | --- |
+| `isOwned(entry, owner)`, `stripOwned(entries, owner)` | Test one entry or filter an array to keep entries without the marker. |
+| `reconcileHooks(value, owner, additions, { version })`, `removeOwnedHooks(value, owner)` | Calculate the JSON install or uninstall result in memory. The file functions return the object too. |
+| `readJsonConfig(file)`, `readUtf8File(file)` | Read a JSON object or check that a text file is valid UTF-8. A missing JSON file yields `{}`. |
+| `writeJsonAtomic(file, value)` | Write two-space JSON with a final newline. Returns `false` for identical text and `true` after a write. |
+| `writeTextAtomic(file, text)` | Write UTF-8 atomically. Creates parent directories with mode `0700` and writes the file with mode `0600`. Rejects a symlink at the destination. |
+| `fileExists(file)` | Returns whether `stat` succeeds. |
+| `quoteShell(value, platform)` | Quote one shell argument. On Windows, wrap it in double quotes and double each embedded double quote. On other platforms, use single quotes and escape embedded single quotes. |
+
+File operations can throw `CosplayError` or propagate a filesystem error.
+
+</details>

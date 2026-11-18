@@ -1,78 +1,85 @@
 # GitHub CLI plugin
 
-This plugin adds attribution to supported GitHub CLI text writes. It controls the `gh` command. The plugin does not install the GitHub CLI.
+The GitHub CLI plugin adds a Markdown byline to supported `gh` text writes. It uses a Git trailer for explicit pull request merge messages.
 
 ## Enable the plugin
+
+Install the GitHub CLI so `gh` is on `PATH`, then enable the bundled plugin.
 
 ```sh
 cosplaying plugin enable gh
 ```
 
-You can also add `gh` to the `plugins` list in your project configuration:
+For project configuration, include `"gh"` in the `plugins` list. The project list replaces the user list. Add any other plugins you want to use to the same list. To set up automatic interception, [install the agent hooks](../../README.md#install-cosplaying).
 
-```json
-{ "plugins": ["gh"] }
-```
+## Add an attributed comment
 
-A project plugin list replaces the user list. `cosplaying install` installs agent hooks but does not enable this plugin.
-
-## Supply the model
-
-Installed agent hooks supply the model. For a direct command, use `--model`:
+Agent hooks supply the model. For a direct command, replace `MODEL_ID` with the current model ID or set `COSPLAYING_MODEL`. Run the command in the repository that contains the issue.
 
 ```sh
-cosplaying hook --model "MODEL_ID" -- gh issue view 123
+cosplaying hook --model "MODEL_ID" -- gh issue comment 123 --body "The build passed."
 ```
 
-Replace `MODEL_ID` with the current model ID. You can also set `COSPLAYING_MODEL`.
+The comment includes the body and a visible byline with the model and policy link. A supported text write needs a model before `gh` can run. Read commands can run without one. [Attribution settings](../../README.md#set-the-attribution-text)
 
-A supported text write without a model stops before `gh` starts. Read commands do not need a model.
+<details>
+<summary>Send a body from a file or stdin</summary>
 
-## Supported text
+```sh
+cosplaying hook --model "MODEL_ID" -- gh issue comment 123 --body-file note.md
 
-| Command | Text that receives attribution |
+printf '%s\n' 'The build passed.' |
+  cosplaying hook --model "MODEL_ID" -- gh issue comment 123 --body-file -
+```
+
+When it adds attribution to a file, the plugin gives `gh` a temporary copy with mode `0600` and keeps the source file intact. It removes the copy after `gh` exits. It uses the same mechanism for supported stdin, template, and JSON inputs. If the input needs no change, it can keep the original path.
+
+</details>
+
+## Supported text fields
+
+| `gh` command | Text that receives attribution |
 | --- | --- |
-| `pr create`, `pr edit`, `pr comment`, `pr review` | The body text. |
-| `issue create`, `issue edit`, `issue comment` | The body text. |
-| `pr close`, `issue close` | The text from `--comment`. |
-| `release create`, `release edit` | The release notes. |
-| `repo create`, `repo edit`, `label create`, `label edit` | The text from `--description`. |
-| `gist create`, `gist edit` | The text from `--desc`. The plugin does not change gist file contents. |
+| `pr create`, `pr edit`, `pr comment`, `pr review` | `--body` or `--body-file`. Pull request creation can also use `--template`. |
+| `issue create`, `issue edit`, `issue comment` | `--body` or `--body-file`. |
+| `pr close`, `issue close` | `--comment`. |
+| `release create`, `release edit` | `--notes` or `--notes-file`. |
+| `repo create`, `repo edit`, `label create`, `label edit` | `--description`. |
+| `gist create`, `gist edit` | `--desc`. Gist file contents stay intact. |
 | `project item-edit` | The draft issue body from `--body`. |
-| `agent-task create` | The task description or text from `--from-file`. |
+| `agent-task create` | The task description argument or the text from `--from-file`. |
 
-A review without body text receives a body with attribution only. Commands that require text stop if no supported text input is present.
-
-For supported text writes, supply the final text through a command argument, file, or supported template option. The plugin stops a supported text write with `--web` or `-w`.
+Supply the final text through a supported option. The plugin stops a write that requires text when the input is missing. A review without a body gets a body with attribution only. For supported text writes, use the CLI because `--web` and `-w` are blocked. Commands outside the plugin's supported command list pass through.
 
 ### Pull request merge messages
 
-An explicit `pr merge` body receives an `AI-Assisted-By` trailer. If you supply only `--subject`, the plugin adds a body with the trailer. It does not change the subject.
-
-The plugin stops `pr merge --rebase` if you supply an explicit message. A merge without explicit message options passes through unchanged.
+An explicit `gh pr merge` body gets an `AI-Assisted-By` trailer. A subject supplied without a body gets a body with the trailer. The subject stays intact. The plugin rejects explicit merge messages with `--rebase`. A merge without explicit message options passes through.
 
 ### API requests
 
-`gh api` supports selected REST routes and GraphQL mutations. Supported resources include issues, pull requests, comments, reviews, discussions, projects, releases, repositories, advisories, and code-scanning alert dismissals.
+`gh api` adds attribution to selected REST routes and GraphQL mutations. See the [REST rules](api.js) and [GraphQL rules](graphql.js) for the exact routes and fields.
 
-The plugin adds Markdown attribution to supported text fields. Git commit messages receive an `AI-Assisted-By` trailer. Selected reviewer requests and Git object writes require a model but do not receive a byline.
+- Supported text fields get a Markdown byline. Git commit messages get an `AI-Assisted-By` trailer.
+- Selected reviewer requests and Git object writes require a model and have no byline.
+- GET, HEAD, OPTIONS, and GraphQL queries pass through. Selected POST requests, such as workflow reruns, Markdown rendering, and release note generation, also pass through.
+- The plugin stops API writes outside the approved set. For GraphQL writes, use one approved mutation per request.
 
-The plugin permits selected operations without text, such as workflow reruns. It also permits POST requests for Markdown rendering and release note generation without attribution. GET, HEAD, OPTIONS, and GraphQL queries pass through without attribution.
+<details>
+<summary>Supply text to an API write</summary>
 
-Other API writes stop before `gh` starts. GraphQL attribution supports one approved mutation per request. For the exact routes and fields, refer to [the REST rules](api.js) and [the GraphQL rules](graphql.js).
+This command adds an issue comment through a supported REST route. Replace `OWNER`, `REPO`, `123`, and `MODEL_ID` with the values for the intended write.
 
-The plugin does not classify every `gh` subcommand as a write. Commands outside its supported command list pass through unchanged.
+```sh
+cosplaying hook --model "MODEL_ID" -- gh api repos/OWNER/REPO/issues/123/comments \
+  --method POST -f 'body=The build passed.'
+```
 
-## File input
+For this route, the plugin adds the byline to `body`. You can also supply the body with `-F body=@note.md` or give the request as a JSON file with `--input`. Use one source for each attributed field.
 
-The plugin keeps source files unchanged. When file input needs attribution, the plugin writes a temporary copy with mode `0600`. It passes the copy path to `gh` and removes the copy after `gh` exits.
+For an approved GraphQL content mutation, use one mutation operation with one top-level mutation field. Reference a variable for the text. Supply the query and variables with `-f` or `-F`, or supply one `--input` JSON file with a top-level `query` and a `variables` object. A commit mutation that receives a trailer needs the JSON file form with the complete `variables.input` object. Batch review comments and threads also need the JSON file form.
 
-The same temporary-file mechanism handles supported stdin, template, and JSON inputs. An input that does not need a change can keep its source path.
+If a request stops, use the method, endpoint, and field names in the error to correct it. If the operation has no approved attribution rule, ask the user for an approved route. [REST rules](api.js), [GraphQL rules](graphql.js)
 
-## Plugin development
+</details>
 
-The default export in [index.js](index.js) is the plugin entry point. `context.realBin` contains the GitHub CLI executable path. `COSPLAYING_GH_BIN` can select an absolute executable path.
-
-`context.attribution.annotateMarkdown(text)` adds the Markdown byline. `context.attribution.renderTrailer()` supplies the `AI-Assisted-By` line.
-
-For the plugin interface, refer to the [main README](../../README.md#develop-a-plugin) and the [plugin API](../../packages/plugin/README.md).
+To select a specific GitHub CLI executable, set `COSPLAYING_GH_BIN` to its absolute path. For the implementation and the contract it uses, see the [plugin entry point](index.js) and [plugin API](../../packages/plugin/README.md).

@@ -1,44 +1,59 @@
-# @cosplaying/adapters
+# Harness adapters
 
-Private workspace package. Import it as `cosplaying/adapters`.
+Import `cosplaying/adapters` when you need to work with a coding agent's hook format. An adapter selects the user or project file and builds the settings that the agent reads. For agents that call `cosplaying agent-hook`, it also reads the event payload and formats the response.
 
-## What it does
+## Find the file an agent uses
 
-Owns the setup for each coding harness. `ClaudeCode`, `Codex`, `Cursor`, `Gemini`, `OpenCode`, and `Pi` each know their path, events, hook command, and the response a hook event writes.
+```js
+import { homedir } from 'node:os';
+import { getAdapter } from 'cosplaying/adapters';
 
-## Scope
+const codex = getAdapter('codex');
+console.log(codex.file({ home: homedir(), env: process.env }));
+// <home>/.codex/hooks.json
+```
 
-This package selects user and project paths, owner markers, event names, and matchers. It installs and removes harness files. It supplies JSON or text for hook responses.
+Pass `projectDir` to get the project path. `getAdapter(id)` returns `undefined` for an unknown ID. The exported `adapters` array contains the instances in the order below.
 
-`@cosplaying/hooks` writes the file. This package chooses the path and the contents. Pi and OpenCode files are generated here and do not import this package. Each extension contains its own child process runner. Hook-order repair stays in `@cosplaying/cli`. Shipped `git` and `gh` plugins live in `plugins/`, not in this package.
+| ID | User file | Project file |
+| --- | --- | --- |
+| `claude-code` | `~/.claude/settings.json` | `.claude/settings.json` |
+| `codex` | `~/.codex/hooks.json` | `.codex/hooks.json` |
+| `cursor` | `~/.cursor/hooks.json` | `.cursor/hooks.json` |
+| `gemini` | `~/.gemini/settings.json` | `.gemini/settings.json` |
+| `opencode` | `~/.config/opencode/plugins/cosplaying.js` | `.opencode/plugins/cosplaying.js` |
+| `pi` | `~/.pi/agent/extensions/cosplaying.js` | `.pi/extensions/cosplaying.js` |
 
-## Public API
+For the OpenCode user file, an absolute `XDG_CONFIG_HOME` replaces `~/.config`. For Pi, `PI_CODING_AGENT_DIR` replaces `~/.pi/agent`.
 
-- `adapters` is one instance of each class, in this order: `claude-code`, `codex`, `cursor`, `gemini`, `opencode`, `pi`.
-- `getAdapter(id)` returns that instance. An unknown id is `undefined`.
-- `ClaudeCode`, `Codex`, `Cursor`, `Gemini`, `OpenCode`, `Pi`, `Harness`, and `ExtensionHarness` are the classes.
+## Follow a hook event
 
-Each instance has `id`, `label`, `binary`, and `kind`. `kind` is `json` or `extension`.
+For the JSON adapters, the agent runs a registered command and sends its event as JSON. The CLI uses the adapter to identify the event and extract the shell command. The adapter then formats the session prompt, the updated tool input, or the reason to stop.
 
-- `file({ home, env, projectDir })` returns the user file. When `projectDir` is set, it returns the project file.
-- `marker()` is `# cosplaying:<id>` for a JSON harness and `// cosplaying:<id>` for Pi and OpenCode.
-- `events()` is the hook events a JSON install writes. Pi and OpenCode return an empty list.
-- `install(options)` and `uninstall(options)` write or remove that file and return its path. `options.commands` supplies the command list for Pi and OpenCode. `options.bin` selects the CLI executable for JSON hooks and extensions.
-- `defaultEvent()`, `isSessionStart(event)`, `isPreTool(event)`, `isShellTool(input)`, and `extractCommand(input)` classify one hook payload.
-- `deny(reason)`, `allow(toolInput)`, `unchanged()`, and `sessionPayload(prompt)` are the hook response. `unchanged()` is `null` when the harness writes nothing for an unchanged command.
-- `installedNote({ projectDir })` and `retrustNote()` are lines for install and doctor. An empty string means no line.
-- `alsoRuns()` lists harness ids whose pre-tool hooks are checked after this one. Cursor returns `claude-code`.
+| Agent | Events and response behavior |
+| --- | --- |
+| Claude Code | Uses `SessionStart` and `PostModelSwitch` to record the model and `SessionEnd` to remove it. The session prompt is text. `PreToolUse` matches `Bash\|PowerShell`. |
+| Codex | Registers `SessionStart` and `PreToolUse`. Reads `cmd` from `exec_command` input and denies an unreadable shell command. The adapter supplies hook approval instructions. |
+| Cursor | Registers `sessionStart` and `preToolUse` with flat entries and configuration version `1`. It matches `Shell` and returns a `permission` response. The CLI also checks Claude Code's hooks when it checks Cursor's hook order. |
+| Gemini CLI | Registers `SessionStart` and `BeforeTool`. It matches `run_shell_command` and returns a `decision` response. The install note applies to project hooks. |
 
-Claude Code stores the model at `SessionStart` and updates it at `PostModelSwitch`. It removes the stored model at `SessionEnd`. Its session prompt is plain text. Its `PreToolUse` matcher is `Bash|PowerShell`. Codex reads `exec_command` from `cmd`, denies an unreadable shell command, and supplies the Codex trust lines.
+Pi and OpenCode load standalone JavaScript extensions. Each generated file contains its own process runner. Pi uses the active model ID when available. OpenCode uses `COSPLAYING_MODEL` or its harness label.
 
-Cursor writes version `1`, flat command entries, and `permission` responses. Its `preToolUse` matcher is `Shell`. Gemini matches `run_shell_command` and writes `decision` responses. Its install note is only present when `projectDir` is set. Pi reads `PI_CODING_AGENT_DIR`.
+<details>
+<summary>Adapter methods and classes</summary>
 
-OpenCode reads an absolute `XDG_CONFIG_HOME`.
+The module exports `Harness` and `ExtensionHarness`, plus `ClaudeCode`, `Codex`, `Cursor`, `Gemini`, `OpenCode`, and `Pi`. An instance has an `id`, a display `label`, a `binary`, and a `kind` of `json` or `extension`.
 
-The session methods are `endsSession(event)`, `switchesModel(event)`, `onSessionStart(input, context)`, `onSessionEnd(input, context)`, `onModelSwitch(input, context)`, and `modelFromSession(input, context)`. The CLI uses these methods for session model storage.
+| Method | Use |
+| --- | --- |
+| `file({ home, env, projectDir })`, `marker()`, `events()` | Get the file path, ownership marker, and installed JSON events. The marker begins with `# cosplaying:` for JSON hooks and `// cosplaying:` for extensions. Extensions return an empty event list. |
+| `install(options)`, `uninstall(options)` | Update or remove the owned hooks and return the file path. Pass `bin` to select the CLI invocation and `commands` to supply the extension's command list. |
+| `defaultEvent()`, `isSessionStart(event)`, `isPreTool(event)`, `isShellTool(input)`, `extractCommand(input)` | Classify the payload and find the command. |
+| `deny(reason)`, `allow(toolInput)`, `unchanged()`, `sessionPayload(prompt)` | Format the agent's response. `unchanged()` can return `null` when there is no output to write. |
+| `endsSession(event)`, `switchesModel(event)`, `onSessionStart(input, context)`, `onSessionEnd(input, context)`, `onModelSwitch(input, context)`, `modelFromSession(input, context)` | Process session events and look up the session model. |
+| `installedNote({ projectDir })`, `retrustNote()`, `alsoRuns()` | Supply install or approval instructions and identify agents whose hooks run later in the chain. |
+| `ExtensionHarness#render(commands, bin)` | Generate the extension file contents. |
 
-`ExtensionHarness.render(commands, bin)` supplies the standalone extension source. Pi uses the active model ID when available. OpenCode uses `COSPLAYING_MODEL` or its harness label.
+</details>
 
-## Related packages
-
-`@cosplaying/cli` calls `getAdapter` for install, uninstall, agent-hook, and doctor. `@cosplaying/hooks` writes the JSON and the generated files. The installed command uses `cliInvocation` from the CLI path module. Failures from those writers throw `CosplayError`.
+The [hook file API](../hooks/README.md) applies the file changes. The [CLI](../cli/README.md) runs the hook, checks hook order, and prints the doctor report.
