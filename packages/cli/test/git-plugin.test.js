@@ -249,6 +249,10 @@ test('push inspection works with the system Git executable', () => {
   assert.equal(base.status, 0, base.stderr);
   const pushed = run(['hook', '--model', 'Example', '--', 'git', 'push', '--quiet', '--set-upstream', 'origin', 'main'], fixture, { COSPLAYING_GIT_BIN: systemGit });
   assert.equal(pushed.status, 0, pushed.stderr);
+  const second = run(['hook', '--model', 'Example', '--', 'git', 'commit', '--quiet', '--allow-empty', '-m', 'second'], fixture);
+  assert.equal(second.status, 0, second.stderr);
+  const pushedAgain = run(['hook', '--model', 'Example', '--', 'git', 'push', '--quiet'], fixture, { COSPLAYING_GIT_BIN: systemGit });
+  assert.equal(pushedAgain.status, 0, pushedAgain.stderr);
   const sha = unattributed(fixture.repo, fixture.env, 'Unattributed system Git commit');
   const blocked = run(['hook', '--model', 'Example', '--', 'git', 'push', '--quiet'], fixture, { COSPLAYING_GIT_BIN: systemGit });
   assert.equal(blocked.status, 2, blocked.stderr);
