@@ -51,6 +51,8 @@ With a model, the plugin checks which commits the refspecs would send to each pu
 
 The plugin checks explicit or configured refspecs against the refs advertised by each destination. It excludes commits reachable from those remote refs when their commit objects are available locally. It stops the push if it cannot determine or inspect a destination.
 
+The check also supports Git versions that allow only revisions in `log --stdin`. It passes each remote tip as a caret-prefixed exclusion so older Git versions can use the same check.
+
 The check rejects matching, negative, and wildcard refspecs, as well as `--all`, `--mirror`, and `--tags`. Use an explicit refspec when you need to select a single ref. Dry runs and ref deletions skip the outgoing commit check. A push with an empty model also skips the check.
 
 </details>
