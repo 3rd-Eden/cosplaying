@@ -404,7 +404,7 @@ function outgoingCommits(bin, args, info, options) {
   /**
    * Lists commits selected by a `git log` range, with the committer email and the attribution trailer.
    *
-   * @param {string[]} range Revision arguments passed to `git log`, for example a source and `--not` tips.
+   * @param {string[]} range Revision arguments passed to `git log`, including caret-prefixed exclusions.
    * @returns {Array<{sha: string, email: string, trailer: string, subject: string}> | null} One record per commit. Null when `git log` cannot be run.
    */
   const branchCommits = (range) => {
