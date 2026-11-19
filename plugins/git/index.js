@@ -500,7 +500,7 @@ function outgoingCommits(bin, args, info, options) {
         const [sha, type] = line.split(' ');
         return type === 'commit' ? [sha] : [];
       });
-      const outgoing = branchCommits(knownTips.length ? [source, '--not', ...knownTips] : [source]);
+      const outgoing = branchCommits(knownTips.length ? [source, ...knownTips.map((tip) => `^${tip}`)] : [source]);
       if (!outgoing) return null;
       for (const commit of outgoing) commits.set(commit.sha, commit);
     }

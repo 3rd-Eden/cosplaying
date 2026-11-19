@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -236,6 +236,23 @@ test('push blocks an unattributed local commit when a model is set', () => {
   const allowed = run(['hook', '--', 'git', 'push', '--quiet'], fixture);
   assert.equal(allowed.status, 0, allowed.stderr);
   assert.equal(git(['--git-dir', remote, 'rev-parse', 'main'], fixture.env, fixture.repo).trim(), sha);
+});
+
+test('push inspection works with the system Git executable', () => {
+  const systemGit = '/usr/bin/git';
+  if (!existsSync(systemGit)) return;
+  const fixture = repository();
+  const remote = path.join(fixture.home, 'origin.git');
+  git(['init', '--quiet', '--bare', '--initial-branch=main', remote], fixture.env, fixture.repo);
+  git(['remote', 'add', 'origin', remote], fixture.env, fixture.repo);
+  const base = run(['hook', '--model', 'Example', '--', 'git', 'commit', '--quiet', '--allow-empty', '-m', 'base'], fixture);
+  assert.equal(base.status, 0, base.stderr);
+  const pushed = run(['hook', '--model', 'Example', '--', 'git', 'push', '--quiet', '--set-upstream', 'origin', 'main'], fixture, { COSPLAYING_GIT_BIN: systemGit });
+  assert.equal(pushed.status, 0, pushed.stderr);
+  const sha = unattributed(fixture.repo, fixture.env, 'Unattributed system Git commit');
+  const blocked = run(['hook', '--model', 'Example', '--', 'git', 'push', '--quiet'], fixture, { COSPLAYING_GIT_BIN: systemGit });
+  assert.equal(blocked.status, 2, blocked.stderr);
+  assert.match(blocked.stderr, new RegExp(sha.slice(0, 12)));
 });
 
 test('fast-forward merge keeps an incoming merge commit unchanged', () => {
