@@ -370,6 +370,18 @@ export class Harness {
   }
 
   /**
+   * Returns host-specific instructions for finding the active model ID.
+   *
+   * The CLI exposes this text as `{modelGuidance}` in session prompts when commands are available. Harnesses with a confirmed model source can add it to the shared fallback.
+   *
+   * @returns {string} Generic model lookup guidance for this harness.
+   */
+  modelGuidance() {
+    const name = this.label || this.id;
+    return `Check this session's conversation record or JSONL transcript for its most recent model ID. If the session does not report one, use your self-reported agent name. If you do not have one, use the harness name, ${name}. Do not ask the user for a model name.`;
+  }
+
+  /**
    * Returns the note that install prints after it writes this harness.
    *
    * The note tells the operator how to approve the new hooks. An empty string means install prints nothing.

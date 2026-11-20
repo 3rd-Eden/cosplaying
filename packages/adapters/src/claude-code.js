@@ -146,6 +146,17 @@ export class ClaudeCode extends Harness {
   }
 
   /**
+   * Returns instructions for finding Claude Code's current model ID.
+   *
+   * Claude Code stores model IDs in several fields in the current session JSONL transcript.
+   *
+   * @returns {string} Model lookup instructions for the session prompt.
+   */
+  modelGuidance() {
+    return `${super.modelGuidance()} For Claude Code, check \`params.model\`, \`message.model\`, or \`attachment.identity.modelId\` in this session's JSONL transcript.`;
+  }
+
+  /**
    * Returns the approval note printed after Claude Code hooks are installed.
    *
    * Claude Code does not run settings hooks until workspace trust is accepted.

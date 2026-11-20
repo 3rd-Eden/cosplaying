@@ -19,7 +19,7 @@ You can also supply `cwd`, `home`, `env`, `platform`, `stdin`, `stdout`, and `st
 
 ## Follow a command through cosplaying
 
-1. On session start, `agent-hook` reads the agent event and uses the adapter to return the session prompt. Claude Code events also update or clear the stored session model. Pi and OpenCode run generated extensions.
+1. On session start, `agent-hook` reads the agent event and uses the adapter to return the session prompt. An adapter can add instructions for finding the current model in its session record. Claude Code events also update or clear the stored session model. Pi and OpenCode run generated extensions.
 2. Before a shell tool runs, cosplaying finds enabled commands in the shell input. It uses the [harness adapter](../adapters/README.md) to send back the rewritten input or a reason to stop. The `rewrite` command prints the result of the rewrite for inspection.
 3. The rewritten command calls `hook`. The CLI resolves the model, loads the plugin, finds the real executable, and calls `run(args, context)`. The plugin decides which arguments need attribution. [Plugin API](../plugin/README.md)
 4. The CLI returns the plugin status. A nested `hook` with `COSPLAYING_INSIDE_HOOK=1` calls the real executable directly.
@@ -56,7 +56,7 @@ The shell parser can reach commands inside substitutions, pipelines, loops, and 
 
 Import `loadConfig` from `cosplaying/config`. It accepts `{ cwd, home, defaults }`. The built-in settings apply first, followed by company `defaults`, user settings, and project settings. The `variables` objects merge. Each `plugins` array replaces the previous array. Supply the model through the agent session, command options, or environment. A configuration file with `model` or `attribution.model` causes an error.
 
-The CLI uses `prompts.session` when plugins intercept shell commands and `prompts.empty` when none do. If the applicable prompt is absent, it can use `attribution.templates.session` or `attribution.templates.empty`, respectively. [Configuration files and templates](../../README.md#set-the-attribution-text) and [session prompt variables](../../README.md#set-the-session-instructions)
+The CLI uses `prompts.session` when plugins intercept shell commands and `prompts.empty` when none do. If the applicable prompt is absent, it can use `attribution.templates.session` or `attribution.templates.empty`, respectively. The selected adapter supplies `{modelGuidance}`. It gives the host-specific model source when known and otherwise checks this session's conversation record or JSONL transcript. If no model ID is available, it uses the agent's self-reported name, then the harness name. It does not ask the user. A custom session template must include `{modelGuidance}` to show this text. [Configuration files and templates](../../README.md#set-the-attribution-text) and [session prompt variables](../../README.md#set-the-session-instructions)
 
 ## Check an installation
 

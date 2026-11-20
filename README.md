@@ -261,19 +261,19 @@ This example sets both prompts:
 ```json
 {
   "prompts": {
-    "session": "You are running in {harness}. For {commands}, prefix the command with {executable} hook --model <current model id> --. Team: {team}. Policy: {link}.",
+    "session": "You are running in {harness}. For {commands}, prefix the command with {executable} hook --model <current model id> --. Team: {team}. Policy: {link}.\n\n{modelGuidance}",
     "empty": "No cosplaying plugins are installed for {harness}. Do not invent wrapped commands."
   }
 }
 ```
 
-`{harness}` is the coding agent name. `{commands}` is the plugin command list in alphabetical order. `{executable}` is the cosplaying command. `{model}` is the model name for the session. `{link}` is the policy URL. The `variables` object supplies other values, such as `{team}`.
+`{harness}` is the coding agent name. `{commands}` is the plugin command list in alphabetical order. `{executable}` is the cosplaying command. `{model}` is the model name for the session. `{modelGuidance}` tells the agent where to find its model ID in the current session. If no model ID is available, the agent uses its self-reported name, then the harness name. It does not ask the user. Adapters add host-specific details. Include this variable in a custom session template to show the guidance. `{link}` is the policy URL. The `variables` object supplies other values, such as `{team}`.
 
 The default prompts are:
 
 | Prompt | Default text |
 | --- | --- |
-| `session` | `For authored writes with {commands}, prefix the command with {executable} hook --model <current model id> --. You are running in {harness}. When you know the model id, pass it as plain text with --model. Installed hooks pass --model-base64 for you. Write authored text in ASD-STE100 Simplified Technical English. If a command is blocked, correct the input or ask the user. Never bypass cosplaying for those commands.` |
+| `session` | `For authored writes with {commands}, prefix the command with {executable} hook --model <current model id> --. You are running in {harness}. When you know the model id, pass it as plain text with --model. Installed hooks pass --model-base64 for you. Write authored text in ASD-STE100 Simplified Technical English. If a command is blocked, correct the input or ask the user. Never bypass cosplaying for those commands.{modelGuidance}` |
 | `empty` | `No cosplaying plugins are installed. Do not invent wrapped commands. Write authored text in ASD-STE100 Simplified Technical English.` |
 
 A failed hook-order check appends the hook file names and the `cosplaying doctor --repair` instruction after the selected prompt.

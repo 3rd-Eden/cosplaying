@@ -228,6 +228,56 @@ test('configured session prompts replace the built-in session and empty text', (
   assert.equal(JSON.parse(alias.stdout).additional_context, 'from-attribution|Cursor');
 });
 
+test('session prompts include model lookup guidance for every harness', (t) => {
+  const context = isolated(t);
+  writeFileSync(context.config, JSON.stringify({
+    plugins: [context.plugin],
+    prompts: { session: 'Custom session prompt.{modelGuidance}' },
+  }));
+
+  const cursor = runCli(['agent-hook', 'cursor', 'sessionStart'], context, '{}');
+  assert.equal(cursor.status, 0, cursor.stderr);
+  const cursorPrompt = JSON.parse(cursor.stdout).additional_context;
+  assert.match(cursorPrompt, /self-reported agent name/);
+  assert.match(cursorPrompt, /use the harness name, Cursor/);
+  assert.match(cursorPrompt, /Do not ask the user for a model name/);
+  assert.match(cursorPrompt, /model_id/);
+  assert.match(cursorPrompt, /transcript_path/);
+
+  const codex = runCli(['agent-hook', 'codex', 'SessionStart'], context, '{}');
+  assert.equal(codex.status, 0, codex.stderr);
+  const codexPrompt = JSON.parse(codex.stdout).hookSpecificOutput.additionalContext;
+  assert.match(codexPrompt, /Custom session prompt\./);
+  assert.match(codexPrompt, /self-reported agent name/);
+  assert.match(codexPrompt, /use the harness name, Codex/);
+  assert.match(codexPrompt, /Do not ask the user for a model name/);
+  assert.match(codexPrompt, /payload\.state\.model\.model/);
+  assert.match(codexPrompt, /payload\.thread_settings\.model/);
+
+  const claude = runCli(['agent-hook', 'claude-code', 'SessionStart'], context, JSON.stringify({ session_id: 'session' }));
+  assert.equal(claude.status, 0, claude.stderr);
+  assert.match(claude.stdout, /use the harness name, Claude Code/);
+  assert.match(claude.stdout, /params\.model/);
+  assert.match(claude.stdout, /message\.model/);
+  assert.match(claude.stdout, /attachment\.identity\.modelId/);
+
+  const gemini = runCli(['agent-hook', 'gemini', 'SessionStart'], context, '{}');
+  assert.equal(gemini.status, 0, gemini.stderr);
+  assert.match(gemini.stdout, /self-reported agent name/);
+  assert.match(gemini.stdout, /transcript_path/);
+  assert.match(gemini.stdout, /use the harness name, Gemini CLI/);
+
+  const pi = runCli(['agent-hook', 'pi', 'session-start'], context, '{}');
+  assert.equal(pi.status, 0, pi.stderr);
+  assert.match(pi.stdout, /self-reported agent name/);
+  assert.match(pi.stdout, /use the harness name, Pi/);
+
+  const opencode = runCli(['agent-hook', 'opencode', 'session-start'], context, '{}');
+  assert.equal(opencode.status, 0, opencode.stderr);
+  assert.match(opencode.stdout, /self-reported agent name/);
+  assert.match(opencode.stdout, /use the harness name, OpenCode/);
+});
+
 test('invalid install and doctor flags report parser errors without writes', (t) => {
   const context = isolated(t);
   for (const [args, flag] of [[['doctor', '--nope'], '--nope'], [['install', '--project-dir'], 'project-dir']]) {

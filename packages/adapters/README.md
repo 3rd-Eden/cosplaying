@@ -37,6 +37,19 @@ For the JSON adapters, the agent runs a registered command and sends its event a
 | Cursor | Registers `sessionStart` and `preToolUse` with flat entries and configuration version `1`. It matches `Shell` and returns a `permission` response. The CLI also checks Claude Code's hooks when it checks Cursor's hook order. |
 | Gemini CLI | Registers `SessionStart` and `BeforeTool`. It matches `run_shell_command` and returns a `decision` response. The install note applies to project hooks. |
 
+The session prompt uses `{modelGuidance}` from the selected adapter. Its model source is:
+
+| Harness | Model source in session guidance |
+| --- | --- |
+| Claude Code | `params.model`, `message.model`, or `attachment.identity.modelId` in the current JSONL transcript. |
+| Codex | `payload.state.model.model` or `payload.thread_settings.model` in the current file under `~/.codex/sessions`. |
+| Cursor | `model_id` or the legacy `model` field. `transcript_path` locates the current JSONL transcript. |
+| Gemini CLI | `transcript_path` locates the current session JSON transcript. |
+| Pi | Uses the shared session transcript guidance. The `session-start` extension call does not pass a model field to `agent-hook`. |
+| OpenCode | Uses the shared session transcript guidance. The `session-start` extension call does not pass a model field to `agent-hook`. |
+
+The shared guidance says to use the latest model ID for this session. If the session has no model ID, use the agent's self-reported name. If the agent has no self-reported name, use the harness name. It does not ask the user. Custom adapters can override `modelGuidance()`. The built-in session prompt includes this text. A custom `prompts.session` template must include `{modelGuidance}` to show it.
+
 Pi and OpenCode load standalone JavaScript extensions. Each generated file contains its own process runner. Pi uses the active model ID when available. OpenCode uses `COSPLAYING_MODEL` or its harness label.
 
 <details>
@@ -50,7 +63,7 @@ The module exports `Harness` and `ExtensionHarness`, plus `ClaudeCode`, `Codex`,
 | `install(options)`, `uninstall(options)` | Update or remove the owned hooks and return the file path. Pass `bin` to select the CLI invocation and `commands` to supply the extension's command list. |
 | `defaultEvent()`, `isSessionStart(event)`, `isPreTool(event)`, `isShellTool(input)`, `extractCommand(input)` | Classify the payload and find the command. |
 | `deny(reason)`, `allow(toolInput)`, `unchanged()`, `sessionPayload(prompt)` | Format the agent's response. `unchanged()` can return `null` when there is no output to write. |
-| `endsSession(event)`, `switchesModel(event)`, `onSessionStart(input, context)`, `onSessionEnd(input, context)`, `onModelSwitch(input, context)`, `modelFromSession(input, context)` | Process session events and look up the session model. |
+| `endsSession(event)`, `switchesModel(event)`, `onSessionStart(input, context)`, `onSessionEnd(input, context)`, `onModelSwitch(input, context)`, `modelFromSession(input, context)`, `modelGuidance()` | Process session events, look up the session model, and add host-specific model lookup instructions. |
 | `installedNote({ projectDir })`, `retrustNote()`, `alsoRuns()` | Supply install or approval instructions and identify agents whose hooks run later in the chain. |
 | `ExtensionHarness#render(commands, bin)` | Generate the extension file contents. |
 
