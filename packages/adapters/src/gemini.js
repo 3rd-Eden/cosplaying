@@ -37,6 +37,17 @@ export class Gemini extends Harness {
   }
 
   /**
+   * Returns instructions for finding Gemini CLI's current model ID.
+   *
+   * Gemini CLI includes the current session transcript path in its hook data.
+   *
+   * @returns {string} Model lookup instructions for the session prompt.
+   */
+  modelGuidance() {
+    return "For Gemini CLI, check the JSON transcript at `transcript_path` for this session's most recent model ID. " + super.modelGuidance();
+  }
+
+  /**
    * Builds one Gemini CLI hook group.
    *
    * BeforeTool is limited to `run_shell_command` so other tools are not sent to this hook.

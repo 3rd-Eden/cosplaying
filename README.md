@@ -267,7 +267,7 @@ This example sets both prompts:
 }
 ```
 
-`{harness}` is the coding agent name. `{commands}` is the plugin command list in alphabetical order. `{executable}` is the cosplaying command. `{model}` is the model name for the session. `{modelGuidance}` tells the agent to check the current session information or JSONL for its model ID. Adapters add host-specific details. Include it in a custom session template to show the guidance. `{link}` is the policy URL. The `variables` object supplies other values, such as `{team}`.
+`{harness}` is the coding agent name. `{commands}` is the plugin command list in alphabetical order. `{executable}` is the cosplaying command. `{model}` is the model name for the session. `{modelGuidance}` tells the agent where to find its model ID in the current session. If no model ID is available, the agent uses its self-reported name, then the harness name. It does not ask the user. Adapters add host-specific details. Include this variable in a custom session template to show the guidance. `{link}` is the policy URL. The `variables` object supplies other values, such as `{team}`.
 
 The default prompts are:
 

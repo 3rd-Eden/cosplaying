@@ -190,12 +190,13 @@ export async function runAgentHook(id, eventName, context) {
   if (harness.isSessionStart(event)) {
     harness.onSessionStart(input, context);
     let prompt = renderSession({
-      harness: id,
+      harness: harness.label || id,
       executable,
       commands: Object.keys(prepared.routes),
       template: prepared.config.session,
       empty: prepared.config.empty,
       model,
+      modelGuidance: harness.modelGuidance(),
       link: prepared.config.link,
       variables: prepared.config.variables,
     });

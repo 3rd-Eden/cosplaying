@@ -37,9 +37,18 @@ For the JSON adapters, the agent runs a registered command and sends its event a
 | Cursor | Registers `sessionStart` and `preToolUse` with flat entries and configuration version `1`. It matches `Shell` and returns a `permission` response. The CLI also checks Claude Code's hooks when it checks Cursor's hook order. |
 | Gemini CLI | Registers `SessionStart` and `BeforeTool`. It matches `run_shell_command` and returns a `decision` response. The install note applies to project hooks. |
 
-The session prompt adds adapter-specific model lookup guidance when an adapter supplies it. Claude Code guidance points to `params.model`, `message.model`, and `attachment.identity.modelId` in the current transcript. Codex guidance points to `payload.state.model.model` and `payload.thread_settings.model` in the current session JSONL file. Custom adapters can override `modelGuidance()` to add their own instructions. The built-in session prompt includes this text. A custom `prompts.session` template must include `{modelGuidance}` to show it.
+The session prompt uses `{modelGuidance}` from the selected adapter. Its model source is:
 
-The base adapter supplies general session and JSONL guidance. Claude Code and Codex add their host-specific field names.
+| Harness | Model source in session guidance |
+| --- | --- |
+| Claude Code | `params.model`, `message.model`, or `attachment.identity.modelId` in the current JSONL transcript. |
+| Codex | `payload.state.model.model` or `payload.thread_settings.model` in the current file under `~/.codex/sessions`. |
+| Cursor | `model_id` or the legacy `model` field. `transcript_path` locates the current JSONL transcript. |
+| Gemini CLI | `transcript_path` locates the current session JSON transcript. |
+| Pi | Uses the shared session transcript guidance. The `session-start` extension call does not pass a model field to `agent-hook`. |
+| OpenCode | Uses the shared session transcript guidance. The `session-start` extension call does not pass a model field to `agent-hook`. |
+
+The shared guidance says to use the latest model ID for this session. If the session has no model ID, use the agent's self-reported name. If the agent has no self-reported name, use the harness name. It does not ask the user. Custom adapters can override `modelGuidance()`. The built-in session prompt includes this text. A custom `prompts.session` template must include `{modelGuidance}` to show it.
 
 Pi and OpenCode load standalone JavaScript extensions. Each generated file contains its own process runner. Pi uses the active model ID when available. OpenCode uses `COSPLAYING_MODEL` or its harness label.
 

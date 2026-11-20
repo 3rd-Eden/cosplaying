@@ -65,6 +65,17 @@ export class Cursor extends Harness {
   }
 
   /**
+   * Returns instructions for finding Cursor's current model ID.
+   *
+   * Cursor hook data can report `model_id` or the legacy `model` field and provides `transcript_path` for the current session transcript.
+   *
+   * @returns {string} Model lookup instructions for the session prompt.
+   */
+  modelGuidance() {
+    return "For Cursor, check the current session's `model_id` field or the legacy `model` field. Use `transcript_path` to locate its JSONL transcript. " + super.modelGuidance();
+  }
+
+  /**
    * Returns the Cursor event used when `agent-hook` is called without one.
    *
    * @returns {string} `preToolUse`.

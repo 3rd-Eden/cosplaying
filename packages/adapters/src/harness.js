@@ -372,12 +372,13 @@ export class Harness {
   /**
    * Returns host-specific instructions for finding the active model ID.
    *
-   * The CLI exposes this text as `{modelGuidance}` in session prompts when commands are available. The base adapter asks the agent to check current session information or JSONL.
+   * The CLI exposes this text as `{modelGuidance}` in session prompts when commands are available. Harnesses with a confirmed model source can add it to the shared fallback.
    *
    * @returns {string} Generic model lookup guidance for this harness.
    */
   modelGuidance() {
-    return 'Check the current session information or JSONL conversation for the model ID it reports. Use the newest value for this session. Do not use data from another session. If no model ID is available, ask the user.';
+    const name = this.label || this.id;
+    return `Check this session's conversation record or JSONL transcript for its most recent model ID. If the session does not report one, use your self-reported agent name. If you do not have one, use the harness name, ${name}. Do not ask the user for a model name.`;
   }
 
   /**

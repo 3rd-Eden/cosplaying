@@ -1,6 +1,5 @@
 import { CosplayError } from 'cosplaying/errors';
 import replaces from 'replaces';
-import { getAdapter } from 'cosplaying/adapters';
 
 /** @type {string} */
 export const DEFAULT_SESSION = 'For authored writes with {commands}, prefix the command with {executable} hook --model <current model id> --. You are running in {harness}. When you know the model id, pass it as plain text with --model. Installed hooks pass --model-base64 for you. Write authored text in ASD-STE100 Simplified Technical English. If a command is blocked, correct the input or ask the user. Never bypass cosplaying for those commands.{modelGuidance}';
@@ -9,42 +8,30 @@ export const DEFAULT_SESSION = 'For authored writes with {commands}, prefix the 
 export const EMPTY_SESSION = 'No cosplaying plugins are installed. Do not invent wrapped commands. Write authored text in ASD-STE100 Simplified Technical English.';
 
 /**
- * Returns the display name of a harness.
- *
- * The session prompt uses this name so the agent sees the product name, for example Claude Code, instead of the harness id.
- *
- * @param {string} harness Harness id, for example `claude-code`.
- * @returns {string} Adapter label for that id. The same id when no adapter is registered.
- */
-export function harnessLabel(harness) {
-  return getAdapter(harness)?.label || harness;
-}
-
-/**
  * Builds the text that a harness shows when a session starts.
  *
- * The text tells the agent to prefix authored writes with this CLI. An empty command list uses the empty prompt, which tells the agent not to invent wrapped commands. `{modelGuidance}` comes from the harness adapter and describes where to find its active model ID. `{harness}`, `{executable}`, `{commands}`, `{model}`, `{link}`, and the keys in `variables` are replaced in either prompt.
+ * The text tells the agent to prefix authored writes with this CLI. An empty command list uses the empty prompt, which tells the agent not to invent wrapped commands. `{modelGuidance}` comes from the selected adapter and describes where to find its active model ID. `{harness}`, `{executable}`, `{commands}`, `{model}`, `{link}`, and the keys in `variables` are replaced in either prompt.
  *
  * @param {object} options
- * @param {string} options.harness Harness id. The text shows the display name for this id.
+ * @param {string} options.harness Display name for the selected harness.
  * @param {string} options.executable Quoted invocation of this CLI. The text tells the agent to put this command before a wrapped write.
  * @param {string[]} options.commands Plugin command names that shell rewrite wraps. The names are sorted before they are inserted. An empty list selects the empty prompt.
  * @param {string} [options.template] Session prompt from settings. Used when `commands` is not empty. The built-in session prompt is used when this is omitted or empty.
  * @param {string} [options.empty] Empty prompt from settings. Used when `commands` is empty. The built-in empty prompt is used when this is omitted or empty.
  * @param {string} [options.model] Model name for this session. An empty name stays empty in `{model}`.
+ * @param {string} [options.modelGuidance] Model lookup instructions from the selected harness adapter.
  * @param {string} [options.link] Policy URL from settings. It is inserted as stored.
  * @param {Record<string, string>} [options.variables] Extra `{name}` values from settings. The built-in values, including adapter-supplied `modelGuidance`, replace a variable of the same name.
  * @returns {string} Prompt text for the session-start hook.
  */
-export function renderSession({ harness, executable, commands, template, empty, model, link, variables }) {
+export function renderSession({ harness, executable, commands, template, empty, model, modelGuidance, link, variables }) {
   const names = [...commands].sort((left, right) => left.localeCompare(right));
   const source = names.length === 0 ? (empty || EMPTY_SESSION) : (template || DEFAULT_SESSION);
-  const guidance = names.length ? getAdapter(harness)?.modelGuidance() || '' : '';
   const values = {
     ...(variables ?? {}),
-    modelGuidance: guidance ? `\n\n${guidance}` : '',
+    modelGuidance: names.length && modelGuidance ? `\n\n${modelGuidance}` : '',
     executable,
-    harness: harnessLabel(harness),
+    harness,
     commands: names.join(', '),
     link: link || '',
     model: model || '',
