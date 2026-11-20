@@ -66,8 +66,8 @@ jobs:
         uses: changesets/action/version@v2.1.2
         with:
           script: pnpm version-packages
-          commit-message: chore(release): version packages
-          pr-title: chore(release): version packages
+          commit-message: "chore(release): version packages"
+          pr-title: "chore(release): version packages"
           pr-base-branch: main
 
   test:
