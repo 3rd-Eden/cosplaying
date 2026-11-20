@@ -370,6 +370,17 @@ export class Harness {
   }
 
   /**
+   * Returns host-specific instructions for finding the active model ID.
+   *
+   * The CLI appends this text to a session prompt when commands are available. The base adapter has no model lookup instructions.
+   *
+   * @returns {string} Model lookup guidance, or an empty string when this harness has no known source.
+   */
+  modelGuidance() {
+    return '';
+  }
+
+  /**
    * Returns the note that install prints after it writes this harness.
    *
    * The note tells the operator how to approve the new hooks. An empty string means install prints nothing.

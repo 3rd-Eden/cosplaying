@@ -228,6 +228,27 @@ test('configured session prompts replace the built-in session and empty text', (
   assert.equal(JSON.parse(alias.stdout).additional_context, 'from-attribution|Cursor');
 });
 
+test('session prompts include model lookup guidance from Claude Code and Codex', (t) => {
+  const context = isolated(t);
+  writeFileSync(context.config, JSON.stringify({
+    plugins: [context.plugin],
+    prompts: { session: 'Custom session prompt.' },
+  }));
+
+  const codex = runCli(['agent-hook', 'codex', 'SessionStart'], context, '{}');
+  assert.equal(codex.status, 0, codex.stderr);
+  const codexPrompt = JSON.parse(codex.stdout).hookSpecificOutput.additionalContext;
+  assert.match(codexPrompt, /Custom session prompt\./);
+  assert.match(codexPrompt, /payload\.state\.model\.model/);
+  assert.match(codexPrompt, /payload\.thread_settings\.model/);
+
+  const claude = runCli(['agent-hook', 'claude-code', 'SessionStart'], context, JSON.stringify({ session_id: 'session' }));
+  assert.equal(claude.status, 0, claude.stderr);
+  assert.match(claude.stdout, /params\.model/);
+  assert.match(claude.stdout, /message\.model/);
+  assert.match(claude.stdout, /attachment\.identity\.modelId/);
+});
+
 test('invalid install and doctor flags report parser errors without writes', (t) => {
   const context = isolated(t);
   for (const [args, flag] of [[['doctor', '--nope'], '--nope'], [['install', '--project-dir'], 'project-dir']]) {

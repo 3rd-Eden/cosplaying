@@ -19,7 +19,7 @@ You can also supply `cwd`, `home`, `env`, `platform`, `stdin`, `stdout`, and `st
 
 ## Follow a command through cosplaying
 
-1. On session start, `agent-hook` reads the agent event and uses the adapter to return the session prompt. Claude Code events also update or clear the stored session model. Pi and OpenCode run generated extensions.
+1. On session start, `agent-hook` reads the agent event and uses the adapter to return the session prompt. An adapter can add instructions for finding the current model in its session record. Claude Code events also update or clear the stored session model. Pi and OpenCode run generated extensions.
 2. Before a shell tool runs, cosplaying finds enabled commands in the shell input. It uses the [harness adapter](../adapters/README.md) to send back the rewritten input or a reason to stop. The `rewrite` command prints the result of the rewrite for inspection.
 3. The rewritten command calls `hook`. The CLI resolves the model, loads the plugin, finds the real executable, and calls `run(args, context)`. The plugin decides which arguments need attribution. [Plugin API](../plugin/README.md)
 4. The CLI returns the plugin status. A nested `hook` with `COSPLAYING_INSIDE_HOOK=1` calls the real executable directly.

@@ -37,6 +37,8 @@ For the JSON adapters, the agent runs a registered command and sends its event a
 | Cursor | Registers `sessionStart` and `preToolUse` with flat entries and configuration version `1`. It matches `Shell` and returns a `permission` response. The CLI also checks Claude Code's hooks when it checks Cursor's hook order. |
 | Gemini CLI | Registers `SessionStart` and `BeforeTool`. It matches `run_shell_command` and returns a `decision` response. The install note applies to project hooks. |
 
+The session prompt adds adapter-specific model lookup guidance when an adapter supplies it. Claude Code guidance points to `params.model`, `message.model`, and `attachment.identity.modelId` in the current transcript. Codex guidance points to `payload.state.model.model` and `payload.thread_settings.model` in the current session JSONL file. Custom adapters can override `modelGuidance()` to add their own instructions.
+
 Pi and OpenCode load standalone JavaScript extensions. Each generated file contains its own process runner. Pi uses the active model ID when available. OpenCode uses `COSPLAYING_MODEL` or its harness label.
 
 <details>
@@ -50,7 +52,7 @@ The module exports `Harness` and `ExtensionHarness`, plus `ClaudeCode`, `Codex`,
 | `install(options)`, `uninstall(options)` | Update or remove the owned hooks and return the file path. Pass `bin` to select the CLI invocation and `commands` to supply the extension's command list. |
 | `defaultEvent()`, `isSessionStart(event)`, `isPreTool(event)`, `isShellTool(input)`, `extractCommand(input)` | Classify the payload and find the command. |
 | `deny(reason)`, `allow(toolInput)`, `unchanged()`, `sessionPayload(prompt)` | Format the agent's response. `unchanged()` can return `null` when there is no output to write. |
-| `endsSession(event)`, `switchesModel(event)`, `onSessionStart(input, context)`, `onSessionEnd(input, context)`, `onModelSwitch(input, context)`, `modelFromSession(input, context)` | Process session events and look up the session model. |
+| `endsSession(event)`, `switchesModel(event)`, `onSessionStart(input, context)`, `onSessionEnd(input, context)`, `onModelSwitch(input, context)`, `modelFromSession(input, context)`, `modelGuidance()` | Process session events, look up the session model, and add host-specific model lookup instructions. |
 | `installedNote({ projectDir })`, `retrustNote()`, `alsoRuns()` | Supply install or approval instructions and identify agents whose hooks run later in the chain. |
 | `ExtensionHarness#render(commands, bin)` | Generate the extension file contents. |
 

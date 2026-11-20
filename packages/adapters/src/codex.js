@@ -81,6 +81,17 @@ export class Codex extends Harness {
   }
 
   /**
+   * Returns instructions for finding Codex's current model ID.
+   *
+   * Codex stores model IDs in the current session JSONL file under its session directory.
+   *
+   * @returns {string} Model lookup instructions for the session prompt.
+   */
+  modelGuidance() {
+    return 'If the hook reports "Codex", inspect this session\'s JSONL file under `~/.codex/sessions`. Use the newest value from `payload.state.model.model` or `payload.thread_settings.model`. Do not use data from another session. If no model ID is available, ask the user.';
+  }
+
+  /**
    * Returns the note that tells the operator to trust the new Codex hooks.
    *
    * Codex does not run a hook until `/hooks` records approval for that command.

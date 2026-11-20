@@ -23,7 +23,7 @@ export function harnessLabel(harness) {
 /**
  * Builds the text that a harness shows when a session starts.
  *
- * The text tells the agent to prefix authored writes with this CLI. An empty command list uses the empty prompt, which tells the agent not to invent wrapped commands. `{harness}`, `{executable}`, `{commands}`, `{model}`, `{link}`, and the keys in `variables` are replaced in either prompt.
+ * The text tells the agent to prefix authored writes with this CLI. An empty command list uses the empty prompt, which tells the agent not to invent wrapped commands. For a non-empty command list, adapter-specific model lookup guidance is appended when the adapter provides it. `{harness}`, `{executable}`, `{commands}`, `{model}`, `{link}`, and the keys in `variables` are replaced in either prompt.
  *
  * @param {object} options
  * @param {string} options.harness Harness id. The text shows the display name for this id.
@@ -47,7 +47,9 @@ export function renderSession({ harness, executable, commands, template, empty, 
     link: link || '',
     model: model || '',
   };
-  return replaces(source, /\{()([^{}]+)\}/g, values);
+  const prompt = replaces(source, /\{()([^{}]+)\}/g, values);
+  const guidance = names.length ? getAdapter(harness)?.modelGuidance() : '';
+  return guidance ? `${prompt}\n\n${guidance}` : prompt;
 }
 
 /**
