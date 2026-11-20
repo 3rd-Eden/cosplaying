@@ -243,6 +243,13 @@ function rewriteGhArgs(inputArgs, context) {
   let changed = false;
 
   try {
+    const separator = args.indexOf('--');
+    const options = separator < 0 ? args : args.slice(0, separator);
+    // Help flags only request CLI documentation; they do not write attributed text.
+    if (options.includes('--help') || options.includes('-h')) {
+      return { args, changed, path: info.path, tempFiles, blockedReason: null };
+    }
+
     if (info.path === 'api') {
       const result = rewriteApiArgs(args, { info, context, tempFiles, readStdin });
       return { ...result, path: info.path, tempFiles, blockedReason: null };
