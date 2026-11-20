@@ -88,7 +88,7 @@ export class Codex extends Harness {
    * @returns {string} Model lookup instructions for the session prompt.
    */
   modelGuidance() {
-    return 'If the hook reports "Codex", inspect this session\'s JSONL file under `~/.codex/sessions`. Use the newest value from `payload.state.model.model` or `payload.thread_settings.model`. Do not use data from another session. If no model ID is available, ask the user.';
+    return `${super.modelGuidance()} For Codex, check this session's JSONL file under \`~/.codex/sessions\`. Read \`payload.state.model.model\` or \`payload.thread_settings.model\`.`;
   }
 
   /**

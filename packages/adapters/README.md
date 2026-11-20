@@ -37,7 +37,9 @@ For the JSON adapters, the agent runs a registered command and sends its event a
 | Cursor | Registers `sessionStart` and `preToolUse` with flat entries and configuration version `1`. It matches `Shell` and returns a `permission` response. The CLI also checks Claude Code's hooks when it checks Cursor's hook order. |
 | Gemini CLI | Registers `SessionStart` and `BeforeTool`. It matches `run_shell_command` and returns a `decision` response. The install note applies to project hooks. |
 
-The session prompt adds adapter-specific model lookup guidance when an adapter supplies it. Claude Code guidance points to `params.model`, `message.model`, and `attachment.identity.modelId` in the current transcript. Codex guidance points to `payload.state.model.model` and `payload.thread_settings.model` in the current session JSONL file. Custom adapters can override `modelGuidance()` to add their own instructions.
+The session prompt adds adapter-specific model lookup guidance when an adapter supplies it. Claude Code guidance points to `params.model`, `message.model`, and `attachment.identity.modelId` in the current transcript. Codex guidance points to `payload.state.model.model` and `payload.thread_settings.model` in the current session JSONL file. Custom adapters can override `modelGuidance()` to add their own instructions. The built-in session prompt includes this text. A custom `prompts.session` template must include `{modelGuidance}` to show it.
+
+The base adapter supplies general session and JSONL guidance. Claude Code and Codex add their host-specific field names.
 
 Pi and OpenCode load standalone JavaScript extensions. Each generated file contains its own process runner. Pi uses the active model ID when available. OpenCode uses `COSPLAYING_MODEL` or its harness label.
 

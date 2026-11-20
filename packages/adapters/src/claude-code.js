@@ -153,7 +153,7 @@ export class ClaudeCode extends Harness {
    * @returns {string} Model lookup instructions for the session prompt.
    */
   modelGuidance() {
-    return 'If the hook reports "Claude Code", inspect this session\'s JSONL transcript. Use the newest model ID from `params.model`, `message.model`, or `attachment.identity.modelId`. Do not use data from another session. If no model ID is available, ask the user.';
+    return `${super.modelGuidance()} For Claude Code, check \`params.model\`, \`message.model\`, or \`attachment.identity.modelId\` in this session's JSONL transcript.`;
   }
 
   /**

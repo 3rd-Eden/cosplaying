@@ -56,7 +56,7 @@ The shell parser can reach commands inside substitutions, pipelines, loops, and 
 
 Import `loadConfig` from `cosplaying/config`. It accepts `{ cwd, home, defaults }`. The built-in settings apply first, followed by company `defaults`, user settings, and project settings. The `variables` objects merge. Each `plugins` array replaces the previous array. Supply the model through the agent session, command options, or environment. A configuration file with `model` or `attribution.model` causes an error.
 
-The CLI uses `prompts.session` when plugins intercept shell commands and `prompts.empty` when none do. If the applicable prompt is absent, it can use `attribution.templates.session` or `attribution.templates.empty`, respectively. [Configuration files and templates](../../README.md#set-the-attribution-text) and [session prompt variables](../../README.md#set-the-session-instructions)
+The CLI uses `prompts.session` when plugins intercept shell commands and `prompts.empty` when none do. If the applicable prompt is absent, it can use `attribution.templates.session` or `attribution.templates.empty`, respectively. A custom session template can include `{modelGuidance}` to show the base instructions and host-specific model fields. [Configuration files and templates](../../README.md#set-the-attribution-text) and [session prompt variables](../../README.md#set-the-session-instructions)
 
 ## Check an installation
 

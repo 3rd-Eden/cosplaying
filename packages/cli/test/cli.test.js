@@ -228,12 +228,16 @@ test('configured session prompts replace the built-in session and empty text', (
   assert.equal(JSON.parse(alias.stdout).additional_context, 'from-attribution|Cursor');
 });
 
-test('session prompts include model lookup guidance from Claude Code and Codex', (t) => {
+test('session prompts include generic and adapter-specific model lookup guidance', (t) => {
   const context = isolated(t);
   writeFileSync(context.config, JSON.stringify({
     plugins: [context.plugin],
-    prompts: { session: 'Custom session prompt.' },
+    prompts: { session: 'Custom session prompt: {modelGuidance}' },
   }));
+
+  const cursor = runCli(['agent-hook', 'cursor', 'sessionStart'], context, '{}');
+  assert.equal(cursor.status, 0, cursor.stderr);
+  assert.match(JSON.parse(cursor.stdout).additional_context, /JSONL conversation/);
 
   const codex = runCli(['agent-hook', 'codex', 'SessionStart'], context, '{}');
   assert.equal(codex.status, 0, codex.stderr);
