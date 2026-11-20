@@ -256,6 +256,12 @@ test('missing-model writes are refused before delivery and reads remain availabl
   assert.ok(context.requests.length > 0);
 });
 
+test('gh release create --help is not blocked for missing attribution', async (t) => {
+  const context = await fixture(t);
+  const help = await run(['hook', '--', 'gh', 'release', 'create', '--help'], context);
+  assert.equal(help.status, 0, help.stderr);
+});
+
 test('textless workflow and job reruns reach the API without disclosure text', async (t) => {
   const context = await fixture(t);
   const cli = await run(['hook', '--', 'gh', 'run', 'rerun', '42'], context);

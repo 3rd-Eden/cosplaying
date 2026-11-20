@@ -38,6 +38,20 @@ export function block(stderr, reason) {
 }
 
 /**
+ * Reports whether a command argument list requests help.
+ *
+ * Help flags are options until `--`; arguments after that marker belong to the command.
+ *
+ * @param {string[]} args Arguments after the executable.
+ * @returns {boolean} True when `-h` or `--help` appears before `--`.
+ */
+export function help(args) {
+  const separator = args.indexOf('--');
+  const options = separator < 0 ? args : args.slice(0, separator);
+  return options.includes('--help') || options.includes('-h');
+}
+
+/**
  * Runs work against a private copy of a text file after attribution is added.
  *
  * The original file is not modified. The copy is mode `0600` and is deleted after `work` finishes, including when `work` throws. A file that is not valid UTF-8 is rejected so the copy cannot hide replacement characters.

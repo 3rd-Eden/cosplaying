@@ -1,5 +1,5 @@
 import path from 'node:path';
-import { block } from 'cosplaying/plugin';
+import { block, help } from 'cosplaying/plugin';
 import { rewriteApiArgs } from './api.js';
 import {
   createTempFiles,
@@ -243,6 +243,10 @@ function rewriteGhArgs(inputArgs, context) {
   let changed = false;
 
   try {
+    if (help(args)) {
+      return { args, changed, path: info.path, tempFiles, blockedReason: null };
+    }
+
     if (info.path === 'api') {
       const result = rewriteApiArgs(args, { info, context, tempFiles, readStdin });
       return { ...result, path: info.path, tempFiles, blockedReason: null };

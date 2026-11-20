@@ -45,7 +45,7 @@ Run `npm install cosplaying` in the plugin directory so Node can resolve the hel
 
 ```js
 import path from 'node:path';
-import { block, withAttributedCopy } from 'cosplaying/plugin';
+import { block, help, withAttributedCopy } from 'cosplaying/plugin';
 
 export const description = 'Add a byline to note text.';
 export const examples = ['publish-note --body "The build passed."'];
@@ -60,7 +60,7 @@ export default async function run(args, context) {
     return result.status ?? 1;
   };
 
-  if (args.length === 1 && args[0] === '--help') {
+  if (help(args)) {
     return execute(args);
   }
 
@@ -207,6 +207,7 @@ Most plugin entry points use only `block` and `withAttributedCopy`. The CLI uses
 
 | Export | Result |
 | --- | --- |
+| `help(args)` | True when `-h` or `--help` appears before `--`. |
 | `RESERVED_COMMANDS` | Set of built-in command names a plugin cannot use. |
 | `pluginDataDirectory({ env, home })` | Installed plugin directory. |
 | `loadInstalledPlugins(options)` | Installed records, sorted by command. |

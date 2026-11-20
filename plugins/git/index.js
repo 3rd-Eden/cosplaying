@@ -1,5 +1,5 @@
 import { CosplayError } from 'cosplaying/errors';
-import { block } from 'cosplaying/plugin';
+import { block, help } from 'cosplaying/plugin';
 
 export const description = 'Attribute Git commits and check pushes for a missing AI-Assisted-By trailer.';
 
@@ -117,6 +117,9 @@ function requireTrailer(context) {
  * @returns {{args: string[], changed: boolean, command: string | null, blockedReason: string | null, trailer?: string}} Arguments to spawn, whether they differ from the input, the subcommand, a block reason when the command must not run, and the trailer when one was rendered.
  */
 function rewriteGitArgs(inputArgs, context) {
+  if (help(inputArgs)) {
+    return { args: [...inputArgs], changed: false, command: null, blockedReason: null };
+  }
   const info = commandInfo(inputArgs);
   if (info?.blockedReason) {
     return { args: [...inputArgs], changed: false, command: null, blockedReason: info.blockedReason };
