@@ -176,6 +176,14 @@ test('git version remains available without attribution', () => {
   assert.match(version.stdout, /^git version /);
 });
 
+test('Git subcommand help is not blocked for missing attribution', () => {
+  const fixture = repository();
+
+  const help = run(['hook', '--', 'git', 'commit', '-h'], fixture);
+
+  assert.match(`${help.stdout}\n${help.stderr}`, /usage: git commit/i);
+});
+
 test('an unknown leading Git option blocks the command', () => {
   const fixture = repository();
 

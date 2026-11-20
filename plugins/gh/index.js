@@ -1,5 +1,5 @@
 import path from 'node:path';
-import { block } from 'cosplaying/plugin';
+import { block, help } from 'cosplaying/plugin';
 import { rewriteApiArgs } from './api.js';
 import {
   createTempFiles,
@@ -243,10 +243,7 @@ function rewriteGhArgs(inputArgs, context) {
   let changed = false;
 
   try {
-    const separator = args.indexOf('--');
-    const options = separator < 0 ? args : args.slice(0, separator);
-    // Help flags only request CLI documentation; they do not write attributed text.
-    if (options.includes('--help') || options.includes('-h')) {
+    if (help(args)) {
       return { args, changed, path: info.path, tempFiles, blockedReason: null };
     }
 
