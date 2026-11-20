@@ -232,7 +232,7 @@ test('session prompts include generic and adapter-specific model lookup guidance
   const context = isolated(t);
   writeFileSync(context.config, JSON.stringify({
     plugins: [context.plugin],
-    prompts: { session: 'Custom session prompt: {modelGuidance}' },
+    prompts: { session: 'Custom session prompt.{modelGuidance}' },
   }));
 
   const cursor = runCli(['agent-hook', 'cursor', 'sessionStart'], context, '{}');
