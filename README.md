@@ -403,6 +403,27 @@ The error message must identify the incorrect input and the necessary correction
 
 For more details, refer to the [plugin API](packages/plugin/README.md) and the [attribution API](packages/attribution/README.md).
 
+## Publish a release
+
+This repository publishes the root `cosplaying` package to npm with Changesets.
+
+For a change that affects package users, run `pnpm changeset` and choose a
+patch, minor, or major release. For a change with no package impact, run
+`pnpm changeset --empty`. CI checks for a changeset on each pull request. It
+skips the generated `changeset-release/main` pull request.
+
+When a pull request with a changeset merges to `main`, GitHub Actions opens or
+updates a release pull request. Review and merge that pull request. GitHub
+Actions then tests and packs the package, publishes it to npm, and creates a
+GitHub release and version tag.
+
+Before the first publish, configure npm Trusted Publishing for `cosplaying`.
+Select GitHub Actions, set the repository to `3rd-Eden/cosplaying`, and set the
+workflow file to `.github/workflows/release.yml`. Do not set an environment;
+the workflow does not use one. Also allow GitHub Actions to create pull requests
+in the repository's Actions settings. The publish job uses OpenID Connect and
+does not need a long-lived npm token. See the [npm Trusted Publishers guide](https://docs.npmjs.com/trusted-publishers).
+
 ## Attribution limits
 
 The byline is text that a person can read. It does not prove who wrote the text. It is not a cryptographic watermark.
